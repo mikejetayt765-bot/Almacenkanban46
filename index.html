@@ -1,0 +1,4023 @@
+<!DOCTYPE html>
+<html lang="es">
+  <script>
+window.addEventListener("error", function(evento){
+  document.body.innerHTML =
+    "<pre style='color:#b00020;background:white;" +
+    "padding:20px;white-space:pre-wrap;font-size:14px'>" +
+    "ERROR: " + evento.message + "\n\n" +
+    "LÍNEA: " + evento.lineno + "\n\n" +
+    (evento.error && evento.error.stack
+      ? evento.error.stack
+      : "") +
+    "</pre>";
+});
+  </script>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1643a5">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Almacén, Producción y Kanban</title>
+<style>
+*{box-sizing:border-box;font-family:Arial,sans-serif}
+body{margin:0;background:#f2f5f8;color:#222}
+header{background:#1565c0;color:#fff;padding:14px;text-align:center}
+header h1{margin:0;font-size:19px}
+header p{margin:4px 0 0;font-size:13px}
+nav{display:flex;overflow-x:auto;background:#fff;border-bottom:1px solid #ddd}
+nav button{border:0;background:#eef2f7;padding:12px 13px;font-weight:bold;cursor:pointer;white-space:nowrap;font-size:13px}
+nav button.activo{background:#1565c0;color:#fff}
+main{padding:10px}
+.tarjeta{background:#fff;border-radius:12px;padding:14px;margin-bottom:12px;box-shadow:0 2px 6px rgba(0,0,0,.08)}
+h2{margin:0 0 10px;font-size:17px}
+h3{margin:10px 0 6px;font-size:15px}
+p{font-size:13px;margin:6px 0}
+input,select{width:100%;padding:11px;margin-bottom:9px;border:1px solid #ccc;border-radius:8px;font-size:15px}
+button{padding:12px;border:0;border-radius:8px;font-size:14px;font-weight:bold;cursor:pointer;margin-bottom:8px;width:100%}
+.azul{background:#1565c0;color:#fff}
+.verde{background:#2e7d32;color:#fff}
+.naranja{background:#ef6c00;color:#fff}
+.rojo{background:#c62828;color:#fff}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{padding:7px;border-bottom:1px solid #e5e5e5;text-align:left}
+th{background:#eef3f8}
+.estado{padding:3px 7px;border-radius:10px;color:#fff;font-size:10px}
+.ok{background:#2e7d32}.agotado{background:#c62828}
+video{width:100%;border-radius:10px;background:#000}
+.kanban{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.bin{background:#fff;border:2px dashed #999;border-radius:10px;padding:8px;min-height:130px}
+.bin h3{font-size:12px;margin:0 0 8px;text-align:center}
+.tarjetaK{background:#fffbe6;border:1px solid #d0b000;border-left:5px solid #f9a825;padding:8px;border-radius:8px;margin-bottom:8px;font-size:11px}
+.bitacora{max-height:200px;overflow:auto;font-size:12px}
+@media(max-width:650px){.kanban{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<div id="pantallaLogin"></div>
+
+<div id="aplicacion" style="display:none">
+<header>
+<h1>📦 Almacén, Producción y Kanban</h1>
+<p id="infoUsuario"></p>
+</header>
+
+<nav id="menu"></nav>
+<main id="contenido"></main>
+</div>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+
+<script>
+
+  
+const firebaseConfig = {
+  apiKey: "AIzaSyBeUYiRRJFPEUFIORh5MwLm7aFH2A6pYvY",
+  authDomain: "almacen-kanban.firebaseapp.com",
+  databaseURL: "https://almacen-kanban-default-rtdb.firebaseio.com",
+  projectId: "almacen-kanban",
+  storageBucket: "almacen-kanban.firebasestorage.app",
+  messagingSenderId: "434475617870",
+  appId: "1:434475617870:web:188bf5b80f00a95066fd1f"
+};
+
+let datos = JSON.parse(localStorage.getItem("almacenKanbanMultiusuario") || "null") || {
+  usuarios: [],
+  materiales: [],
+  productos: [],
+  kanban: [],
+  movimientos: [],
+  bitacora: [],
+  sesion: null
+};
+
+firebase.initializeApp(firebaseConfig);
+const baseDatos = firebase.database();
+
+
+  
+let pestana = "mp";
+let escanerActivo = null;
+
+baseDatos.ref("almacen").on("value", snapshot => {
+  const remoto = snapshot.val() || {};
+  const sesionLocal = datos.sesion;
+
+  datos = {
+    usuarios: remoto.usuarios || [],
+    materiales: remoto.materiales || [],
+    productos: remoto.productos || [],
+    kanban: remoto.kanban || [],
+    movimientos: remoto.movimientos || [],
+    bitacora: remoto.bitacora || [],
+    sesion: sesionLocal
+  };
+
+  mostrar();
+
+}, error => {
+  console.error("Error al leer Firebase:", error);
+  alert(
+    "Error al leer Firebase:\n" +
+    error.code + "\n" +
+    error.message
+  );
+});
+  
+function guardar(){
+  let datosSeguros = {
+    usuarios: datos.usuarios || [],
+    materiales: datos.materiales || [],
+    productos: datos.productos || [],
+    kanban: datos.kanban || [],
+    movimientos: datos.movimientos || [],
+    bitacora: datos.bitacora || [],
+    sesion: datos.sesion || null
+  };
+
+  baseDatos.ref("almacen").set(datosSeguros)
+    .then(() => {
+      mostrar();
+    })
+    .catch(error => {
+      alert("No se pudo guardar en Firebase: " + error.message);
+      console.error(error);
+    });
+}
+
+function fecha(){
+  return new Date().toLocaleString("es-MX");
+}
+
+function bitacora(texto){
+  datos.bitacora.unshift("[" + fecha() + "] " + texto);
+  if(datos.bitacora.length > 150) datos.bitacora.pop();
+}
+
+function movimiento(tipo, codigo, nombre, cantidad, unidad, ruta){
+  datos.movimientos.unshift({
+    fecha: fecha(),
+    tipo,
+    codigo,
+    material: nombre,
+    cantidad,
+    unidad,
+    ruta,
+    rol: datos.sesion.rol
+  });
+}
+
+/* LOGIN */
+window.abrirPantallaPorNotificacion = function(destino){
+  let pantalla = String(destino || "").replace("#", "");
+
+  const pantallasValidas = [
+    "mp",
+    "produccion",
+    "pt",
+    "ingreso",
+    "diseno",
+    "kanban",
+    "movimientos",
+    "roles"
+  ];
+
+  if(pantallasValidas.includes(pantalla)){
+    pestana = pantalla;
+  }else{
+    pestana = "mp";
+  }
+
+  mostrar();
+};
+function pantallaLogin(){
+  document.getElementById("aplicacion").style.display = "none";
+  document.getElementById("pantallaLogin").innerHTML = `
+  <div class="tarjeta">
+    <h2>Iniciar sesión</h2>
+    <input id="usuarioLogin" placeholder="Usuario">
+    <input id="contrasenaLogin" type="password" placeholder="Contraseña">
+    <button class="azul" onclick="iniciarSesion()">Iniciar sesión</button>
+
+    <h3>Crear cuenta nueva</h3>
+    <input id="usuarioNuevo" placeholder="Usuario nuevo">
+    <input id="contrasenaNueva" type="password" placeholder="Contraseña">
+    <select id="rolNuevo">
+      <option>Almacenista</option>
+      <option>Supervisor de almacén</option>
+      <option>Operador de producción</option>
+      <option>Líder de producción</option>
+      <option>Control de calidad</option>
+      <option>Planeación</option>
+      <option>Registro / sistemas</option>
+      <option>Entregas / logística</option>
+      <option>Presentador</option>
+      <option>Auditor</option>
+    </select>
+    <button class="verde" onclick="crearCuenta()">Registrarme</button>
+  </div>`;
+}
+
+function crearCuenta(){
+  let usuario = document.getElementById("usuarioNuevo").value.trim();
+  let contrasena = document.getElementById("contrasenaNueva").value.trim();
+  let rol = document.getElementById("rolNuevo").value;
+
+  if(!usuario || !contrasena){
+    alert("Escriba usuario y contraseña.");
+    return;
+  }
+
+  if(datos.usuarios.find(u => u.usuario === usuario)){
+    alert("Ese usuario ya existe.");
+    return;
+  }
+
+  datos.usuarios.push({usuario, contrasena, rol});
+  bitacora("Nuevo usuario registrado: " + usuario);
+  guardar();
+  alert("Cuenta creada. Ahora inicie sesión.");
+}
+
+function iniciarSesion(){
+  let usuario = document.getElementById("usuarioLogin").value.trim();
+  let contrasena = document.getElementById("contrasenaLogin").value.trim();
+
+  let cuenta = datos.usuarios.find(u => u.usuario === usuario && u.contrasena === contrasena);
+
+  if(!cuenta){
+    alert("Usuario o contraseña incorrectos.");
+    return;
+  }
+
+  datos.sesion = {usuario: cuenta.usuario, rol: cuenta.rol};
+  bitacora("Inicio de sesión: " + usuario);
+  
+ SistemaAvisos.iniciar();
+  const botonNotificaciones = document.createElement("button");
+botonNotificaciones.type = "button";
+botonNotificaciones.className = "azul";
+botonNotificaciones.textContent = "Activar notificaciones";
+
+botonNotificaciones.onclick = async () => {
+  const resultado = await SistemaAvisos.pedirPermiso();
+
+  if(resultado === "granted"){
+    alert("Notificaciones activadas.");
+  }else{
+    alert(
+      "No se activaron las notificaciones. " +
+      "Puedes activarlas desde los ajustes del navegador o del APK."
+    );
+  }
+
+  botonNotificaciones.remove();
+};
+
+document.getElementById("infoUsuario").after(botonNotificaciones);
+  guardar();
+}
+
+function cerrarSesion(){
+  datos.sesion = null;
+  guardar();
+}
+
+function cambiarRol(){
+  let nuevoRol = prompt("Escriba su nuevo rol:", datos.sesion.rol);
+  if(!nuevoRol) return;
+
+  datos.sesion.rol = nuevoRol;
+
+  let cuenta = datos.usuarios.find(u => u.usuario === datos.sesion.usuario);
+  if(cuenta) cuenta.rol = nuevoRol;
+
+  bitacora("Cambio de rol: " + datos.sesion.usuario + " ahora es " + nuevoRol);
+  guardar();
+}
+
+/* MENÚ SEGÚN ROL */
+
+function menuPorRol(){
+  let rol = datos.sesion.rol;
+
+  if(rol === "Almacenista" || rol === "Supervisor de almacén"){
+    return [
+      ["mp","Almacén MP"],
+      ["pt","Almacén PT"],
+      ["ingreso","Ingreso MP"],
+      ["movimientos","Movimientos"]
+    ];
+  }
+
+  if(rol === "Operador de producción" || rol === "Líder de producción"){
+    return [
+      ["produccion","Producción"],
+      ["pt","Producto terminado"],
+      ["kanban","Kanban"],
+      ["movimientos","Movimientos"]
+    ];
+  }
+
+  if(rol === "Planeación"){
+    return [
+      ["diseno","Diseñar producto"],
+      ["kanban","Kanban"],
+      ["movimientos","Movimientos"]
+    ];
+  }
+
+  if(rol === "Control de calidad"){
+    return [
+      ["pt","Producto terminado"],
+      ["movimientos","Movimientos"]
+    ];
+  }
+
+  return [
+    ["mp","Almacén MP"],
+    ["produccion","Producción"],
+    ["pt","Almacén PT"],
+    ["ingreso","Ingreso MP"],
+    ["diseno","Diseñar producto"],
+    ["kanban","Kanban"],
+    ["movimientos","Movimientos"],
+    ["roles","Roles"]
+  ];
+}
+
+function mostrar(){
+  if(!datos.sesion){
+    pantallaLogin();
+    return;
+  }
+
+  document.getElementById("pantallaLogin").innerHTML = "";
+  document.getElementById("aplicacion").style.display = "block";
+
+  let menu = menuPorRol();
+
+  if(!menu.find(m => m[0] === pestana)){
+    pestana = menu[0][0];
+}
+
+  document.getElementById("menu").innerHTML = menu.map(p =>
+    `<button class="${pestana===p[0]?"activo":""}" onclick="pestana='${p[0]}';mostrar()">${p[1]}</button>`
+  ).join("") + `<button onclick="cerrarSesion()">Salir</button>`;
+
+  document.getElementById("infoUsuario").innerText =
+    "Usuario: " + datos.sesion.usuario + " | Rol: " + datos.sesion.rol;
+
+  if(pestana === "mp") verMP();
+  if(pestana === "produccion") verProduccion();
+  if(pestana === "pt") verPT();
+  if(pestana === "ingreso") verIngreso();
+  if(pestana === "diseno") verDiseno();
+  if(pestana === "kanban") verKanban();
+  if(pestana === "movimientos") verMovimientos();
+  if(pestana === "roles") verRoles();
+}
+
+/* ESCÁNER CON CÁMARA */
+/*
+async function abrirCamara(campoDestino, accionAutomatica){
+  let contenedor = document.getElementById("camara");
+
+  if(!contenedor){
+    alert("Esta pantalla no tiene cámara disponible.");
+    return;
+  }
+
+  if(escanerActivo){
+    escanerActivo.stop();
+    escanerActivo = null;
+  }
+
+  if(
+    !navigator.mediaDevices ||
+    !navigator.mediaDevices.getUserMedia
+  ){
+    contenedor.innerHTML =
+      "<p>Este dispositivo no permite usar la cámara desde la aplicación.</p>";
+    return;
+  }
+
+  if(!("BarcodeDetector" in window)){
+    contenedor.innerHTML =
+      "<p>Este navegador no admite lectura automática de códigos. " +
+      "Escribe el código manualmente o usa un escáner físico.</p>";
+    return;
+  }
+
+  try{
+    let stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: "environment",
+        width: {ideal: 1280},
+        height: {ideal: 720}
+      }
+    });
+
+    let video = document.createElement("video");
+    video.setAttribute("playsinline", true);
+    video.setAttribute("muted", true);
+    video.style.width = "100%";
+    video.style.borderRadius = "10px";
+    video.style.background = "#000";
+
+    video.srcObject = stream;
+
+    contenedor.innerHTML = "";
+    contenedor.appendChild(video);
+
+    await video.play();
+
+    let detector = new BarcodeDetector({
+      formats: [
+        "code_128",
+        "code_39",
+        "ean_13",
+        "ean_8",
+        "qr_code",
+        "data_matrix"
+      ]
+    });
+
+    let detenido = false;
+
+    escanerActivo = {
+      stop: function(){
+        detenido = true;
+        stream.getTracks().forEach(track => track.stop());
+      }
+    };
+
+    async function leer(){
+      if(detenido) return;
+
+      try{
+        let codigos = await detector.detect(video);
+
+        if(codigos.length > 0){
+          let codigo = codigos[0].rawValue;
+
+          document.getElementById(campoDestino).value = codigo;
+
+          stream.getTracks().forEach(track => track.stop());
+          detenido = true;
+          escanerActivo = null;
+
+          contenedor.innerHTML =
+            "<p>Código detectado: <b>" + codigo + "</b></p>";
+
+          if(typeof accionAutomatica === "function"){
+            accionAutomatica();
+          }
+
+          return;
+        }
+      }catch(error){
+        console.warn("Error al leer código:", error);
+      }
+
+      requestAnimationFrame(leer);
+    }
+
+    leer();
+
+  }catch(error){
+    contenedor.innerHTML =
+      "<p>No se pudo abrir la cámara. Autoriza el acceso a la cámara " +
+      "o usa el escáner físico.</p>";
+
+    console.error(error);
+  }
+  }
+*/
+async function abrirCamara(campoDestino, accionAutomatica){
+  let contenedor = document.getElementById("camara");
+
+  if(!contenedor){
+    alert("Esta pantalla no tiene cámara disponible.");
+    return;
+  }
+
+  if(escanerActivo){
+    escanerActivo.stop();
+    escanerActivo = null;
+  }
+
+  if(
+    !navigator.mediaDevices ||
+    !navigator.mediaDevices.getUserMedia
+  ){
+    contenedor.innerHTML =
+      "<p>Este dispositivo no permite usar la cámara desde la aplicación.</p>";
+    return;
+  }
+
+  if(!("BarcodeDetector" in window)){
+    contenedor.innerHTML =
+      "<p>Este navegador no admite lectura automática de códigos. " +
+      "Escribe el código manualmente o usa un escáner físico.</p>";
+    return;
+  }
+
+  try{
+    let stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: "environment",
+        width: {ideal: 1280},
+        height: {ideal: 720}
+      }
+    });
+
+    let video = document.createElement("video");
+    video.setAttribute("playsinline", true);
+    video.setAttribute("muted", true);
+    video.style.width = "100%";
+    video.style.borderRadius = "10px";
+    video.style.background = "#000";
+
+    video.srcObject = stream;
+
+    contenedor.innerHTML = "";
+    contenedor.appendChild(video);
+
+    await video.play();
+
+    let detector = new BarcodeDetector({
+      formats: [
+        "code_128",
+        "code_39",
+        "ean_13",
+        "ean_8",
+        "qr_code",
+        "data_matrix"
+      ]
+    });
+
+    let detenido = false;
+
+    escanerActivo = {
+      stop: function(){
+        detenido = true;
+        stream.getTracks().forEach(track => track.stop());
+      }
+    };
+
+    async function leer(){
+      if(detenido) return;
+
+      try{
+        let codigos = await detector.detect(video);
+
+        if(codigos.length > 0){
+          let codigo = codigos[0].rawValue;
+
+          document.getElementById(campoDestino).value = codigo;
+
+          stream.getTracks().forEach(track => track.stop());
+          detenido = true;
+          escanerActivo = null;
+
+          contenedor.innerHTML =
+            "<p>Código detectado: <b>" + codigo + "</b></p>";
+
+          if(typeof accionAutomatica === "function"){
+            accionAutomatica();
+          }
+
+          return;
+        }
+      }catch(error){
+        console.warn("Error al leer código:", error);
+      }
+
+      requestAnimationFrame(leer);
+    }
+
+    leer();
+
+  }catch(error){
+    contenedor.innerHTML =
+      "<p>No se pudo abrir la cámara. Autoriza el acceso a la cámara " +
+      "o usa el escáner físico.</p>";
+
+    console.error(error);
+  }
+  }
+/* ALMACÉN MP */
+
+function verMP(){
+  let filas = datos.materiales.map(m => `
+    <tr>
+      <td><b>${m.codigo}</b></td>
+      <td>${m.nombre}</td>
+      <td>${m.mp} ${m.unidad}</td>
+      <td><span class="estado ${m.mp <= 0 ? "agotado" : "ok"}">${m.mp <= 0 ? "AGOTADO" : "DISPONIBLE"}</span></td>
+    </tr>`).join("");
+
+  document.getElementById("contenido").innerHTML = `
+  <div class="tarjeta">
+    <h2>Almacén de Materia Prima</h2>
+
+    <input id="escanerMP" placeholder="Escanear código de materia prima">
+    <button class="naranja" onclick="abrirCamara('escanerKanban', () => procesarKanban('escanerKanban'))">Escanear Kanban con cámara</button>
+    <button class="naranja" onclick="procesarMP()">Procesar código escaneado</button>
+
+    <input id="serieMP" placeholder="Escribir número de serie">
+    <button class="verde" onclick="procesarMP('serieMP')">Buscar por número de serie</button>
+
+    <div id="camara"></div>
+  </div>
+
+  <div class="tarjeta">
+    <h2>Existencias de materia prima</h2>
+    <table>
+      <tr><th>Código</th><th>Material</th><th>Stock MP</th><th>Estado</th></tr>
+    ${filas || "<tr><td colspan='4'>No hay materiales registrados</td></tr>"}
+    </table>
+
+    <button class="rojo" onclick="eliminarMaterial()">Eliminar materia prima</button>
+    <button class="rojo" onclick="eliminarMovimientoMP()">Eliminar movimientos de MP</button>
+    <button class="rojo" onclick="eliminarBitacoraMP()">Eliminar bitácora de MP</button>
+  </div>`;
+}
+
+function procesarMP(campo = "escanerMP"){
+  let codigo = document.getElementById(campo).value.trim();
+  if(!codigo){
+    alert("Escanee o escriba un código.");
+    return;
+  }
+
+  let material = datos.materiales.find(m => m.codigo === codigo);
+
+  if(!material){
+    alert("Este código no pertenece a una materia prima registrada.");
+    return;
+  }
+
+  let cantidad = parseInt(prompt("Cantidad recibida de " + material.nombre + ":", "1"));
+
+  if(!cantidad || cantidad <= 0){
+    alert("Cantidad inválida.");
+    return;
+  }
+
+  material.mp += cantidad;
+
+    movimiento("Entrada MP", material.codigo, material.nombre, cantidad, material.unidad, "Proveedor → Almacén MP");
+  bitacora("Ingreso de " + cantidad + " " + material.unidad + " de " + material.nombre);
+
+  document.getElementById(campo).value = "";
+
+  SistemaAvisos.avisar({
+    titulo: "Ingreso de materia prima",
+    mensaje:
+      "Se ingresaron " + cantidad + " " + material.unidad +
+      " de " + material.nombre + ".",
+    destino: "#mp",
+    id: "ingreso-" + material.codigo + "-" + Date.now()
+  }).catch(error => {
+    console.warn("No se pudo enviar el aviso:", error);
+  });
+
+  guardar();
+}
+
+
+  
+/* PRODUCCIÓN */
+
+function verProduccion(){
+  let filas = datos.materiales.map(m => `
+    <tr>
+      <td><b>${m.codigo}</b></td>
+      <td>${m.nombre}</td>
+      <td>${m.produccion} ${m.unidad}</td>
+      <td><span class="estado ${m.produccion <= 0 ? "agotado" : "ok"}">${m.produccion <= 0 ? "SIN MATERIAL" : "DISPONIBLE"}</span></td>
+    </tr>`).join("");
+
+  document.getElementById("contenido").innerHTML = `
+  <div class="tarjeta">
+    <h2>Almacén de Producción</h2>
+    <p>Escanee una tarjeta Kanban física para mover material de MP a Producción.</p>
+
+    <input id="escanerKanban" placeholder="Escanear código de tarjeta Kanban">
+    <button class="naranja" onclick="abrirCamara('escanerKanban', () => procesarKanban('escanerKanban'))">Escanear Kanban con cámara</button>
+    <button class="azul" onclick="procesarKanban()">Procesar Kanban</button>
+
+    <input id="serieKanban" placeholder="Escribir número de serie de Kanban">
+    <button class="verde" onclick="procesarKanban('serieKanban')">Buscar Kanban por número de serie</button>
+
+    <div id="camara"></div>
+  </div>
+
+  <div class="tarjeta">
+    <h2>Material disponible en producción</h2>
+    <table>
+      <tr><th>Código</th><th>Material</th><th>Cantidad</th><th>Estado</th></tr>
+    ${filas || "<tr><td colspan='4'>No hay material en producción</td></tr>"}
+    </table>
+
+    <button class="rojo" onclick="eliminarKanban()">Eliminar tarjeta Kanban</button>
+    <button class="rojo" onclick="eliminarMovimientoProduccion()">Eliminar movimientos de Producción</button>
+    <button class="rojo" onclick="eliminarBitacoraProduccion()">Eliminar bitácora de Producción</button>
+  </div>`;
+}
+
+function procesarKanban(campo = "escanerKanban"){
+  let codigo = document.getElementById(campo).value.trim();
+  if(!codigo){
+    alert("Escanee o escriba el código de la tarjeta Kanban.");
+    return;
+  }
+
+  let tarjeta = datos.kanban.find(k => k.codigo === codigo);
+
+  if(!tarjeta){
+    alert("Código Kanban no válido.");
+    return;
+  }
+
+  let material = datos.materiales.find(m => m.codigo === tarjeta.codigoMaterial);
+
+  if(!material){
+    alert("Material no encontrado.");
+    return;
+  }
+
+  if(material.mp < tarjeta.cantidad){
+    alert("No hay suficiente materia prima en el almacén MP.");
+    return;
+  }
+
+  material.mp -= tarjeta.cantidad;
+  material.produccion += tarjeta.cantidad;
+  if(material.mp <= 0){
+    SistemaAvisos.avisar({
+      titulo: "Stock agotado",
+      mensaje:
+        "El material " + material.nombre +
+        " se quedó sin existencias en Almacén MP.",
+      destino: "#mp",
+      id: "stock-" + material.codigo + "-" + Date.now()
+    }).catch(error => {
+      console.warn("No se pudo enviar el aviso:", error);
+    });
+  }
+    movimiento("Kanban", material.codigo, material.nombre, tarjeta.cantidad, material.unidad, "Almacén MP → Producción");
+  bitacora("Kanban " + tarjeta.codigo + " escaneada.");
+
+  document.getElementById(campo).value = "";
+
+  SistemaAvisos.avisar({
+    titulo: "Movimiento Kanban",
+    mensaje:
+      "La tarjeta " + tarjeta.codigo + " movió " +
+      tarjeta.cantidad + " " + material.unidad +
+      " de " + material.nombre +
+      " de Almacén MP a Producción.",
+    destino: "#kanban",
+    id: "kanban-" + tarjeta.codigo + "-" + Date.now()
+  }).catch(error => {
+    console.warn("No se pudo enviar el aviso:", error);
+  });
+
+  guardar();
+}
+
+/* ALMACÉN PT */
+
+function verPT(){
+  let filas = datos.productos.map(p => `
+    <tr>
+      <td><b>${p.codigo}</b></td>
+      <td>${p.nombre}</td>
+      <td>${p.pt || 0}</td>
+    </tr>`).join("");
+
+  document.getElementById("contenido").innerHTML = `
+  <div class="tarjeta">
+    <h2>Producto Terminado</h2>
+    <p>Escanee el código del producto terminado para enviarlo al Almacén PT y descontar sus componentes de Producción.</p>
+
+    <input id="escanerPT" placeholder="Escanear código del producto terminado">
+    <button class="verde" onclick="abrirCamara('escanerPT', () => procesarPT('escanerPT'))">Escanear con cámara</button>
+    <button class="azul" onclick="procesarPT()">Procesar producto terminado</button>
+
+    <input id="seriePT" placeholder="Escribir número de serie del producto">
+    <button class="naranja" onclick="procesarPT('seriePT')">Buscar por número de serie</button>
+
+    <div id="camara"></div>
+  </div>
+
+  <div class="tarjeta">
+    <h2>Almacén de Producto Terminado</h2>
+    <table>
+      <tr><th>Código</th><th>Producto</th><th>Stock PT</th></tr>
+      ${filas || "<tr><td colspan='3'>No hay productos registrados</td></tr>"}
+    </table>
+
+    <button class="rojo" onclick="eliminarProducto()">Eliminar producto terminado</button>
+    <button class="rojo" onclick="eliminarMovimientoPT()">Eliminar movimientos de PT</button>
+    <button class="rojo" onclick="eliminarBitacoraPT()">Eliminar bitácora de PT</button>
+  </div>`;
+}
+
+function procesarPT(campo = "escanerPT"){
+  let codigo = document.getElementById(campo).value.trim();
+  if(!codigo){
+    alert("Escanee o escriba el código del producto.");
+    return;
+  }
+
+  let producto = datos.productos.find(p => p.codigo === codigo);
+
+  if(!producto){
+    alert("Este código no pertenece a un producto terminado registrado.");
+    return;
+  }
+
+  let faltantes = [];
+
+  producto.componentes.forEach(c => {
+    let material = datos.materiales.find(m => m.codigo === c.codigo);
+    if(!material || material.produccion < c.cantidad){
+      faltantes.push(material ? material.nombre : c.codigo);
+    }
+  });
+
+  if(faltantes.length > 0){
+    alert("Falta material en producción: " + faltantes.join(", "));
+    return;
+  }
+
+  producto.componentes.forEach(c => {
+    let material = datos.materiales.find(m => m.codigo === c.codigo);
+    material.produccion -= c.cantidad;
+
+    movimiento("Consumo PT", material.codigo, material.nombre, c.cantidad, material.unidad, "Producción → Producto terminado");
+  });
+
+  producto.pt = (producto.pt || 0) + 1;
+
+    movimiento("Producto terminado", producto.codigo, producto.nombre, 1, "pza", "Producción → Almacén PT");
+  bitacora("Producto " + producto.nombre + " registrado en PT.");
+
+  document.getElementById(campo).value = "";
+
+  SistemaAvisos.avisar({
+    titulo: "Producto terminado",
+    mensaje:
+      "Se registró 1 unidad de " + producto.nombre +
+      " en Almacén PT.",
+    destino: "#pt",
+    id: "pt-" + producto.codigo + "-" + Date.now()
+  }).catch(error => {
+    console.warn("No se pudo enviar el aviso:", error);
+  });
+
+  guardar();
+}
+
+/* INGRESO MP */
+
+function verIngreso(){
+  document.getElementById("contenido").innerHTML = `
+  <div class="tarjeta">
+    <h2>Ingreso de materia prima</h2>
+
+    <input id="escanerIngreso" placeholder="Escanear código de materia prima">
+    <button class="azul" onclick="abrirCamara('escanerIngreso', () => procesarMP('escanerIngreso'))">Escanear con cámara</button>
+    <button class="naranja" onclick="procesarMP('escanerIngreso')">Procesar ingreso</button>
+
+    <input id="serieIngreso" placeholder="Escribir número de serie">
+    <button class="verde" onclick="procesarMP('serieIngreso')">Ingresar por número de serie</button>
+
+    <div id="camara"></div>
+  </div>
+
+  <div class="tarjeta">
+    <h2>Crear materia prima nueva</h2>
+    <input id="nuevoCodigoMP" placeholder="Código nuevo">
+    <input id="nuevoNombreMP" placeholder="Nombre de la materia prima">
+    <input id="nuevaUnidadMP" placeholder="Unidad: pza, kg, m">
+    <input id="nuevaCantidadMP" type="number" placeholder="Cantidad inicial">
+    <button class="verde" onclick="crearMaterialNuevo()">Crear materia prima</button>
+  </div>`;
+}
+
+function crearMaterialNuevo(){
+  let codigo = document.getElementById("nuevoCodigoMP").value.trim();
+  let nombre = document.getElementById("nuevoNombreMP").value.trim();
+  let unidad = document.getElementById("nuevaUnidadMP").value.trim() || "pza";
+  let cantidad = parseInt(document.getElementById("nuevaCantidadMP").value);
+
+  if(!codigo || !nombre || !cantidad){
+    alert("Complete código, nombre y cantidad.");
+    return;
+  }
+
+  if(datos.materiales.find(m => m.codigo === codigo)){
+    alert("Ese código ya existe.");
+    return;
+  }
+
+  datos.materiales.push({
+    codigo, nombre, unidad, mp: cantidad, produccion: 0
+  });
+
+    movimiento("Alta de material", codigo, nombre, cantidad, unidad, "Proveedor → Almacén MP");
+  bitacora("Nueva materia prima creada: " + nombre);
+
+  document.getElementById("nuevoCodigoMP").value = "";
+  document.getElementById("nuevoNombreMP").value = "";
+  document.getElementById("nuevaUnidadMP").value = "";
+  document.getElementById("nuevaCantidadMP").value = "";
+
+  SistemaAvisos.avisar({
+    titulo: "Nueva materia prima",
+    mensaje:
+      "Se creó el material " + nombre +
+      " (" + codigo + ") con " + cantidad + " " + unidad + ".",
+    destino: "#mp",
+    id: "material-" + codigo + "-" + Date.now()
+  }).catch(error => {
+    console.warn("No se pudo enviar el aviso:", error);
+  });
+
+  guardar();
+      }
+
+/* DISEÑO DE PRODUCTO */
+
+let componentesTemporales = [];
+
+function verDiseno(){
+  let opciones = datos.materiales.map(m =>
+    `<option value="${m.codigo}">${m.codigo} — ${m.nombre}</option>`
+  ).join("");
+
+  let lista = componentesTemporales.map((c, i) => {
+    let material = datos.materiales.find(m => m.codigo === c.codigo);
+    return `<tr>
+      <td>${material ? material.nombre : c.codigo}</td>
+      <td>${c.cantidad}</td>
+      <td><button class="rojo" onclick="quitarComponente(${i})">Quitar</button></td>
+    </tr>`;
+  }).join("");
+
+  document.getElementById("contenido").innerHTML = `
+  <div class="tarjeta">
+    <h2>Diseñar producto terminado</h2>
+
+        <input id="nombreProducto" placeholder="Nombre del producto">
+    <input id="descripcionProducto" placeholder="Descripción del producto">
+
+    <input
+      id="codigoBarrasProducto"
+      type="text"
+      placeholder="Escribe o escanea el código de barras del producto"
+      autocomplete="off"
+    >
+
+    <button
+  class="azul"
+  onclick="abrirCamara('codigoBarrasProducto')"
+>
+  Escanear código de barras del producto
+</button>
+
+    <div id="camara"></div>
+    
+    <select id="materialProducto">
+      <option value="">Seleccione una materia prima</option>
+      ${opciones}
+    </select>
+
+    <input id="cantidadComponente" type="number" placeholder="Cantidad utilizada">
+    <button class="azul" onclick="agregarComponente()">Agregar componente</button>
+
+    <table>
+      <tr><th>Material</th><th>Cantidad</th><th>Acción</th></tr>
+      ${lista || "<tr><td colspan='3'>No hay componentes agregados</td></tr>"}
+    </table>
+
+    <button class="verde" onclick="guardarProducto()">Guardar producto</button>
+  </div>
+
+  <div class="tarjeta" id="etiquetaProducto"></div>`;
+}
+
+function agregarComponente(){
+  let codigo = document.getElementById("materialProducto").value;
+  let cantidad = parseInt(document.getElementById("cantidadComponente").value);
+
+  if(!codigo || !cantidad){
+    alert("Seleccione material y cantidad.");
+    return;
+  }
+
+  componentesTemporales.push({codigo, cantidad});
+  document.getElementById("cantidadComponente").value = "";
+  mostrar();
+}
+
+function quitarComponente(indice){
+  componentesTemporales.splice(indice, 1);
+  mostrar();
+}
+
+function guardarProducto(){
+  let nombre = document.getElementById("nombreProducto").value.trim();
+  let descripcion = document.getElementById("descripcionProducto").value.trim();
+
+  if(!nombre || componentesTemporales.length === 0){
+    alert("Escriba el nombre y agregue al menos un material.");
+    return;
+  }
+
+const campoCodigo = document.getElementById(
+  "codigoBarrasProducto"
+);
+
+let codigo = campoCodigo.value.trim();
+
+if(!codigo){
+  alert(
+    "Escribe o escanea el código de barras del producto."
+  );
+  campoCodigo.focus();
+  return;
+}
+
+if((datos.productos || []).some(p => p.codigo === codigo)){
+  alert(
+    "Ese código de barras ya está registrado en otro producto."
+  );
+  return;
+}
+
+if((datos.materiales || []).some(m => m.codigo === codigo)){
+  alert(
+    "Ese código ya está registrado como materia prima. " +
+    "Usa un código diferente para el producto terminado."
+  );
+  return;
+}
+
+if((datos.kanban || []).some(k => k.codigo === codigo)){
+  alert(
+    "Ese código ya pertenece a una tarjeta Kanban. " +
+    "Usa un código diferente para el producto terminado."
+  );
+  return;
+}
+
+  datos.productos.push({
+    codigo,
+    nombre,
+    descripcion,
+    componentes: componentesTemporales,
+    pt: 0
+  });
+
+  bitacora("Producto creado: " + nombre + " (" + codigo + ")");
+  componentesTemporales = [];
+
+  let producto = datos.productos.find(p => p.codigo === codigo);
+
+  let componentesTexto = producto.componentes.map(c => {
+    let material = datos.materiales.find(m => m.codigo === c.codigo);
+    return material.nombre + ": " + c.cantidad + " " + material.unidad;
+  }).join(" | ");
+
+  document.getElementById("etiquetaProducto").innerHTML = `
+    <h2>Etiqueta para imprimir</h2>
+    <p><b>${producto.nombre}</b></p>
+    <p>${producto.descripcion || ""}</p>
+    <p>${componentesTexto}</p>
+    <div class="codigo">${producto.codigo}</div>
+    <button class="azul" onclick="window.print()">Imprimir etiqueta</button>
+  `;
+
+  guardar();
+}
+
+/* KANBAN FÍSICO */
+
+function verKanban(){
+  let tarjetas = datos.kanban.map(k => `
+    <div class="tarjetaK">
+      <b>${k.codigo}</b><br>
+      ${k.material}<br>
+      Cantidad: ${k.cantidad} ${k.unidad}<br>
+      ${k.bin}
+    </div>
+  `).join("");
+
+  document.getElementById("contenido").innerHTML = `
+  <div class="tarjeta">
+    <h2>Registrar tarjeta Kanban física</h2>
+    <p>Seleccione la materia prima, escriba la cantidad y escanee el código de barras que tendrá la tarjeta física.</p>
+
+    <select id="materialKanban">
+      <option value="">Seleccione materia prima</option>
+      ${datos.materiales.map(m => `<option value="${m.codigo}">${m.codigo} — ${m.nombre}</option>`).join("")}
+    </select>
+
+    <input id="cantidadKanban" type="number" placeholder="Cantidad por tarjeta">
+
+    <input id="codigoKanban" placeholder="Escanear código de barras de la tarjeta">
+    <button class="azul" onclick="abrirCamara('codigoKanban')">
+  Escanear con cámara
+</button>
+    <input id="serieKanbanRegistro" placeholder="Escribir número de serie de la tarjeta">
+    <button class="naranja" onclick="registrarKanban('serieKanbanRegistro')">Registrar por número de serie</button>
+
+    <button class="verde" onclick="registrarKanban('codigoKanban')">Registrar tarjeta Kanban</button>
+
+    <div id="camara"></div>
+  </div>
+
+  <div class="tarjeta">
+    <h2>Tablero de 3 bines</h2>
+    <div class="kanban">
+      <div class="bin"><h3>BIN 1<br>Reserva</h3>${tarjetas}</div>
+      <div class="bin"><h3>BIN 2<br>Consumo</h3>${tarjetas}</div>
+      <div class="bin"><h3>BIN 3<br>Reposición</h3>${tarjetas}</div>
+    </div>
+  </div>`;
+}
+
+function registrarKanban(campo){
+  let codigoMaterial = document.getElementById("materialKanban").value;
+  let cantidad = parseInt(document.getElementById("cantidadKanban").value);
+  let codigo = document.getElementById(campo).value.trim();
+
+  let material = datos.materiales.find(m => m.codigo === codigoMaterial);
+
+  if(!material || !cantidad || !codigo){
+    alert("Seleccione material, cantidad y escanee o escriba el código de la tarjeta.");
+    return;
+  }
+
+  if(datos.kanban.find(k => k.codigo === codigo)){
+    alert("Ese código de Kanban ya está registrado.");
+    return;
+  }
+
+  let bin = "BIN " + ((datos.kanban.filter(k => k.codigoMaterial === codigoMaterial).length % 3) + 1);
+
+  datos.kanban.push({
+    codigo,
+    codigoMaterial,
+    material: material.nombre,
+    cantidad,
+    unidad: material.unidad,
+    bin
+  });
+
+  bitacora("Tarjeta Kanban registrada: " + codigo + " para " + material.nombre);
+
+  document.getElementById(campo).value = "";
+  document.getElementById("cantidadKanban").value = "";
+  guardar();
+}
+
+/* MOVIMIENTOS */
+
+function verMovimientos(){
+  document.getElementById("contenido").innerHTML = `
+  <div class="tarjeta">
+    <h2>Movimientos</h2>
+    <table>
+      <tr><th>Fecha</th><th>Tipo</th><th>Código</th><th>Material</th><th>Cantidad</th><th>Ruta</th><th>Rol</th></tr>
+      ${datos.movimientos.map(m => `
+        <tr>
+          <td>${m.fecha}</td>
+          <td>${m.tipo}</td>
+          <td>${m.codigo}</td>
+          <td>${m.material}</td>
+          <td>${m.cantidad} ${m.unidad}</td>
+          <td>${m.ruta}</td>
+          <td>${m.rol}</td>
+        </tr>`).join("") || "<tr><td colspan='7'>No hay movimientos</td></tr>"}
+    </table>
+  </div>
+
+  <div class="tarjeta">
+    <h2>Bitácora</h2>
+    <div class="bitacora">
+      ${datos.bitacora.map(x => "<div>• " + x + "</div>").join("") || "Sin eventos"}
+    </div>
+
+    <button class="rojo" onclick="eliminarMovimiento()">Eliminar todos los movimientos</button>
+    <button class="rojo" onclick="eliminarBitacora()">Eliminar toda la bitácora</button>
+    <button class="rojo" onclick="eliminarTodo()">Eliminar todo el sistema</button>
+  </div>`;
+}
+  
+/* ROLES */
+
+function verRoles(){
+  document.getElementById("contenido").innerHTML = `
+  <div class="tarjeta">
+    <h2>Cambio de rol</h2>
+    <select id="selectorRol">
+      <option>Almacenista</option>
+      <option>Supervisor de almacén</option>
+      <option>Operador de producción</option>
+      <option>Líder de producción</option>
+      <option>Control de calidad</option>
+      <option>Planeación</option>
+      <option>Registro / sistemas</option>
+      <option>Entregas / logística</option>
+      <option>Presentador</option>
+      <option>Auditor</option>
+    </select>
+    <button class="azul" onclick="cambiarRol()">Cambiar mi rol</button>
+  </div>`;
+}
+/* ===== ELIMINACIÓN CONTROLADA ===== */
+
+function permisoEliminar(area){
+  if(!datos.sesion){
+    alert("Primero inicia sesión.");
+    return false;
+  }
+
+  const rol = datos.sesion.rol;
+
+  const permisos = {
+    materiales: [
+      "Registro / sistemas",
+      "Supervisor de almacén",
+      "Almacenista"
+    ],
+    productos: [
+      "Registro / sistemas",
+      "Planeación",
+      "Líder de producción",
+      "Control de calidad",
+      "Entregas / logística"
+    ],
+    kanban: [
+      "Registro / sistemas",
+      "Planeación",
+      "Líder de producción",
+      "Supervisor de almacén"
+    ]
+  };
+
+  if(!(permisos[area] || []).includes(rol)){
+    alert("Tu rol no tiene permiso para esta eliminación.");
+    return false;
+  }
+
+  return true;
+}
+
+function registrarEliminacion(texto){
+  if(!Array.isArray(datos.bitacora)){
+    datos.bitacora = [];
+  }
+
+  bitacora(
+    datos.sesion.usuario + " (" +
+    datos.sesion.rol + "): " + texto
+  );
+
+  guardar();
+}
+
+/* ELIMINAR MATERIA PRIMA */
+
+function eliminarMaterial(){
+  if(!permisoEliminar("materiales")) return;
+
+  const entrada = prompt(
+    "Escribe el código exacto de la materia prima:"
+  );
+
+  if(entrada === null) return;
+
+  const codigo = entrada.trim();
+  if(!codigo) return;
+
+  const materiales = datos.materiales || [];
+  const material = materiales.find(m => m.codigo === codigo);
+
+  if(!material){
+    alert("No se encontró esa materia prima.");
+    return;
+  }
+
+  if(
+    Number(material.mp || 0) !== 0 ||
+    Number(material.produccion || 0) !== 0
+  ){
+    alert(
+      "No se puede eliminar: todavía tiene existencias " +
+      "en MP o Producción. Primero registra los " +
+      "movimientos o ajustes correspondientes."
+    );
+    return;
+  }
+
+  const usadaEnProducto = (datos.productos || []).some(p =>
+    (p.componentes || []).some(c => c.codigo === codigo)
+  );
+
+  const usadaEnKanban = (datos.kanban || []).some(k =>
+    k.codigoMaterial === codigo
+  );
+
+  if(usadaEnProducto || usadaEnKanban){
+    alert(
+      "No se puede eliminar: está vinculada a " +
+      "un producto o a una tarjeta Kanban."
+    );
+    return;
+  }
+
+  if(!confirm(
+    "¿Eliminar la materia prima " +
+    material.nombre + " (" + codigo + ")?"
+  )) return;
+
+  datos.materiales = materiales.filter(m => m.codigo !== codigo);
+
+  registrarEliminacion(
+    "Eliminó materia prima: " + material.nombre +
+    " (" + codigo + ")."
+  );
+}
+
+/* ELIMINAR PRODUCTO */
+
+function eliminarProducto(){
+  if(!permisoEliminar("productos")) return;
+
+  const entrada = prompt(
+    "Escribe el código exacto del producto, por ejemplo PT-123456:"
+  );
+
+  if(entrada === null) return;
+
+  const codigo = entrada.trim();
+  if(!codigo) return;
+
+  const productos = datos.productos || [];
+  const producto = productos.find(p => p.codigo === codigo);
+
+  if(!producto){
+    alert("No se encontró ese producto.");
+    return;
+  }
+
+  if(Number(producto.pt || 0) !== 0){
+    alert(
+      "No se puede eliminar: todavía tiene existencias " +
+      "en Producto Terminado. Primero registra su " +
+      "salida o el ajuste correspondiente."
+    );
+    return;
+  }
+
+  if(!confirm(
+    "¿Eliminar el producto " +
+    producto.nombre + " (" + codigo + ")?"
+  )) return;
+
+  datos.productos = productos.filter(p => p.codigo !== codigo);
+
+  registrarEliminacion(
+    "Eliminó producto: " + producto.nombre +
+    " (" + codigo + ")."
+  );
+}
+
+/* ELIMINAR TARJETA KANBAN */
+
+function eliminarKanban(){
+  if(!permisoEliminar("kanban")) return;
+
+  const entrada = prompt(
+    "Escribe el código exacto de la tarjeta Kanban:"
+  );
+
+  if(entrada === null) return;
+
+  const codigo = entrada.trim();
+  if(!codigo) return;
+
+  const tarjetas = datos.kanban || [];
+  const tarjeta = tarjetas.find(k => k.codigo === codigo);
+
+  if(!tarjeta){
+    alert("No se encontró esa tarjeta Kanban.");
+    return;
+  }
+
+  if(!confirm(
+    "¿Eliminar la tarjeta " + codigo +
+    " de " + tarjeta.material + "?\n\n" +
+    "Esto elimina su registro, pero NO devuelve " +
+    "ni descuenta existencias."
+  )) return;
+
+  datos.kanban = tarjetas.filter(k => k.codigo !== codigo);
+
+  registrarEliminacion(
+    "Eliminó tarjeta Kanban: " + codigo + "."
+  );
+}
+
+/* CONSERVAR HISTORIAL */
+
+function conservarHistorial(){
+  alert(
+    "El historial no se elimina desde este botón.\n\n" +
+    "Para corregir un error, debe registrarse una " +
+    "cancelación o un movimiento de ajuste, " +
+    "conservando el registro original."
+  );
+}
+
+function eliminarMovimientoMP(){ conservarHistorial(); }
+function eliminarBitacoraMP(){ conservarHistorial(); }
+
+function eliminarMovimientoProduccion(){ conservarHistorial(); }
+function eliminarBitacoraProduccion(){ conservarHistorial(); }
+
+function eliminarMovimientoPT(){ conservarHistorial(); }
+function eliminarBitacoraPT(){ conservarHistorial(); }
+
+function eliminarMovimiento(){ conservarHistorial(); }
+function eliminarBitacora(){ conservarHistorial(); }
+
+async function eliminarTodo(){
+  if(
+    !datos.sesion ||
+    datos.sesion.rol !== "Registro / sistemas"
+  ){
+    alert(
+      "Solo el rol Registro / sistemas puede " +
+      "reiniciar el sistema."
+    );
+    return;
+  }
+
+  const confirmar = confirm(
+    "ADVERTENCIA: se eliminarán TODOS los datos " +
+    "del almacén para TODOS los teléfonos.\n\n" +
+    "Incluye usuarios, materiales, productos, " +
+    "Kanban, movimientos y bitácora.\n\n" +
+    "¿Ya exportaste una copia de seguridad y " +
+    "cerraste la aplicación en los otros teléfonos?"
+  );
+
+  if(!confirmar) return;
+
+  const texto = prompt(
+    "Para confirmar, escribe exactamente:\n" +
+    "BORRAR TODO"
+  );
+
+  if(texto !== "BORRAR TODO"){
+    alert("Borrado cancelado.");
+    return;
+  }
+
+  try{
+    // Espera la confirmación del servidor.
+    await baseDatos.ref("almacen").remove();
+
+    datos = {
+      usuarios: [],
+      materiales: [],
+      productos: [],
+      kanban: [],
+      movimientos: [],
+      bitacora: [],
+      sesion: null
+    };
+
+    componentesTemporales = [];
+    pestana = "mp";
+
+    localStorage.removeItem("almacenKanbanMultiusuario");
+
+    mostrar();
+
+    alert(
+      "Los datos del almacén fueron eliminados " +
+      "de Firebase.\n\n" +
+      "Ahora debes crear una cuenta nueva."
+    );
+
+  }catch(error){
+    console.error("Error al eliminar:", error);
+
+    alert(
+      "No se confirmó el borrado en Firebase.\n\n" +
+      error.code + "\n" +
+      error.message
+    );
+  }
+  }
+  /* ======================================
+   ENCARGADO DE SISTEMAS
+   Pegar antes del último pantallaLogin();
+====================================== */
+
+function esEncargado(){
+  const sesion = datos.sesion;
+
+  return !!sesion &&
+    sesion.usuario.trim().toLowerCase() ===
+      "encargado de sistemas" &&
+    sesion.rol === "Registro / sistemas";
+}
+
+function exigirEncargado(){
+  if(esEncargado()) return true;
+
+  alert(
+    "Solo el encargado de sistemas puede " +
+    "agregar, corregir o eliminar información."
+  );
+
+  return false;
+}
+
+/* Mostrar todos los módulos al encargado. */
+
+const menuOriginalSistemas = menuPorRol;
+
+menuPorRol = function(){
+  if(esEncargado()){
+    return [
+      ["mp", "Almacén MP"],
+      ["produccion", "Produccion"],
+      ["pt", "Almacén PT"],
+      ["ingreso", "Ingreso MP"],
+      ["diseno", "Diseñar producto"],
+      ["kanban", "Kanban"],
+      ["movimientos", "Movimientos"]
+    ];
+  }
+
+  return menuOriginalSistemas();
+};
+
+/* Bloquear operaciones para los demás perfiles. */
+
+const operacionesSistemas = [
+  "crearCuenta",
+  "cambiarRol",
+  "procesarMP",
+  "procesarKanban",
+  "procesarPT",
+  "crearMaterialNuevo",
+  "agregarComponente",
+  "quitarComponente",
+  "guardarProducto",
+  "registrarKanban"
+];
+
+operacionesSistemas.forEach(nombre => {
+  const original = window[nombre];
+
+  if(typeof original !== "function") return;
+
+  window[nombre] = function(...argumentos){
+    if(!exigirEncargado()) return;
+    return original.apply(this, argumentos);
+  };
+});
+
+/* Ocultar botones anteriores de eliminación
+   y botones de escritura de otros perfiles. */
+
+const mostrarOriginalSistemas = mostrar;
+
+mostrar = function(){
+  mostrarOriginalSistemas();
+
+  if(!datos.sesion) return;
+
+  document.querySelectorAll(
+    "#contenido button[onclick]"
+  ).forEach(boton => {
+    const accion = boton.getAttribute("onclick") || "";
+
+    const esBorradoAnterior = /eliminar\w*\s*\(/.test(accion);
+
+    const esOperacion = operacionesSistemas.some(nombre =>
+      accion.includes(nombre + "(")
+    );
+
+    if(
+      esBorradoAnterior ||
+      (!esEncargado() && esOperacion)
+    ){
+      boton.remove();
+    }
+  });
+
+  if(esEncargado()){
+    const boton = document.createElement("button");
+
+    boton.textContent = "Administración del sistema";
+    boton.className = "naranja";
+    boton.onclick = panelSistemas;
+
+    document.getElementById("menu").appendChild(boton);
+  }
+};
+
+/* Panel exclusivo del encargado. */
+
+function panelSistemas(){
+  if(!exigirEncargado()) return;
+
+  document.getElementById("contenido").innerHTML = `
+    <div class="tarjeta">
+      <h2>Administración del sistema</h2>
+
+      <p>
+        Agrega información desde los módulos normales.
+        Aquí puedes corregir o eliminar registros
+        mediante su código.
+      </p>
+
+      <select id="areaSistemas">
+        <option value="materiales">Materia prima</option>
+        <option value="productos">Productos</option>
+        <option value="kanban">Tarjetas Kanban</option>
+      </select>
+
+      <input
+        id="codigoSistemas"
+        placeholder="Código exacto del registro"
+      >
+
+      <button
+        class="azul"
+        onclick="corregirRegistroSistemas()"
+      >
+        Corregir registro
+      </button>
+
+      <button
+        class="rojo"
+        onclick="borrarRegistroSistemas()"
+      >
+        Eliminar registro
+      </button>
+    </div>
+
+    <div class="tarjeta">
+      <h2>Reiniciar información</h2>
+
+      <p>
+        Borra materiales, productos, Kanban,
+        movimientos y bitácora.
+        Conserva todos los usuarios.
+      </p>
+
+      <button class="rojo" onclick="eliminarTodo()">
+        Eliminar el sistema, conservar usuarios
+      </button>
+    </div>
+  `;
+}
+
+function seleccionSistemas(){
+  const area = document.getElementById("areaSistemas").value;
+
+  const codigo = document.getElementById(
+    "codigoSistemas"
+  ).value.trim();
+
+  const lista = datos[area] || [];
+  const indice = lista.findIndex(r => r.codigo === codigo);
+
+  if(indice === -1){
+    alert("No se encontró ese código en el área seleccionada.");
+    return null;
+  }
+
+  return {area, codigo, lista, indice};
+}
+
+/* Validar registros corregidos. */
+
+function validarRegistroSistemas(area, registro){
+  const cantidadValida = valor =>
+    typeof valor === "number" &&
+    Number.isFinite(valor) &&
+    valor >= 0;
+
+  if(
+    !registro ||
+    typeof registro !== "object" ||
+    Array.isArray(registro) ||
+    typeof registro.codigo !== "string"
+  ){
+    throw new Error("El registro debe tener un código de texto.");
+  }
+
+  if(area === "materiales"){
+    if(
+      !registro.nombre ||
+      !registro.unidad ||
+      !cantidadValida(registro.mp) ||
+      !cantidadValida(registro.produccion)
+    ){
+      throw new Error(
+        "Revisa nombre, unidad y existencias no negativas."
+      );
+    }
+  }
+
+  if(area === "productos"){
+    if(
+      !registro.nombre ||
+      !cantidadValida(registro.pt) ||
+      !Array.isArray(registro.componentes) ||
+      registro.componentes.length === 0
+    ){
+      throw new Error(
+        "El producto necesita nombre, stock y componentes."
+      );
+    }
+
+    registro.componentes.forEach(componente => {
+      if(
+        !componente ||
+        !cantidadValida(componente.cantidad) ||
+        componente.cantidad <= 0 ||
+        !(datos.materiales || []).some(
+          m => m.codigo === componente.codigo
+        )
+      ){
+        throw new Error("Hay un componente inválido.");
+      }
+    });
+
+    const codigos = registro.componentes.map(c => c.codigo);
+
+    if(new Set(codigos).size !== codigos.length){
+      throw new Error(
+        "No repitas componentes: suma sus cantidades."
+      );
+    }
+  }
+
+  if(area === "kanban"){
+    const material = (datos.materiales || []).find(
+      m => m.codigo === registro.codigoMaterial
+    );
+
+    if(
+      !material ||
+      !cantidadValida(registro.cantidad) ||
+      registro.cantidad <= 0 ||
+      !["BIN 1", "BIN 2", "BIN 3"].includes(registro.bin)
+    ){
+      throw new Error(
+        "Revisa material, cantidad positiva y bin."
+      );
+    }
+
+    registro.material = material.nombre;
+    registro.unidad = material.unidad;
+  }
+}
+
+/* Corrección mediante el registro JSON completo. */
+
+function corregirRegistroSistemas(){
+  if(!exigirEncargado()) return;
+
+  const seleccion = seleccionSistemas();
+  if(!seleccion) return;
+
+  const {area, codigo, lista, indice} = seleccion;
+
+  const texto = prompt(
+    "Corrige los valores. Conserva las comillas, " +
+    "comas y nombres de campos. No cambies el código.",
+    JSON.stringify(lista[indice], null, 2)
+  );
+
+  if(texto === null) return;
+
+  try{
+    const corregido = JSON.parse(texto);
+
+    if(corregido.codigo !== codigo){
+      throw new Error("No se permite cambiar el código.");
+    }
+
+    validarRegistroSistemas(area, corregido);
+
+    if(!confirm("¿Guardar la corrección de " + codigo + "?")){
+      return;
+    }
+
+    datos[area][indice] = corregido;
+
+    bitacora(
+      "Encargado de sistemas corrigió " +
+      area + ": " + codigo
+    );
+
+    guardar();
+
+  }catch(error){
+    alert("No se aplicó la corrección:\n" + error.message);
+  }
+}
+
+/* Borrado individual con comprobaciones. */
+
+function borrarRegistroSistemas(){
+  if(!exigirEncargado()) return;
+
+  const seleccion = seleccionSistemas();
+  if(!seleccion) return;
+
+  const {area, codigo, lista, indice} = seleccion;
+  const registro = lista[indice];
+
+  if(area === "materiales"){
+    const tieneStock =
+      Number(registro.mp || 0) !== 0 ||
+      Number(registro.produccion || 0) !== 0;
+
+    const tieneVinculos =
+      (datos.kanban || []).some(
+        k => k.codigoMaterial === codigo
+      ) ||
+      (datos.productos || []).some(p =>
+        (p.componentes || []).some(c => c.codigo === codigo)
+      );
+
+    if(tieneStock || tieneVinculos){
+      alert(
+        "No se puede eliminar: tiene existencias " +
+        "o está vinculada a productos o Kanban."
+      );
+      return;
+    }
+  }
+
+  if(
+    area === "productos" &&
+    Number(registro.pt || 0) !== 0
+  ){
+    alert("No se puede eliminar un producto con existencias.");
+    return;
+  }
+
+  if(!confirm(
+    "¿Eliminar " + codigo + " de " + area + "?\n" +
+    "Esto no revierte movimientos ni modifica existencias."
+  )) return;
+
+  datos[area] = lista.filter(r => r.codigo !== codigo);
+
+  bitacora(
+    "Encargado de sistemas eliminó " +
+    area + ": " + codigo
+  );
+
+  guardar();
+}
+
+/* Invalidar botones viejos de borrado. */
+
+[
+  "eliminarMaterial",
+  "eliminarProducto",
+  "eliminarKanban",
+  "eliminarMovimientoMP",
+  "eliminarBitacoraMP",
+  "eliminarMovimientoProduccion",
+  "eliminarBitacoraProduccion",
+  "eliminarMovimientoPT",
+  "eliminarBitacoraPT",
+  "eliminarMovimiento",
+  "eliminarBitacora"
+].forEach(nombre => {
+  window[nombre] = function(){
+    if(!exigirEncargado()) return;
+    panelSistemas();
+  };
+});
+
+/* Reiniciar todo el nodo, conservando usuarios. */
+
+eliminarTodo = async function(){
+  if(!exigirEncargado()) return;
+
+  if(!confirm(
+    "Se borrará TODO el contenido del almacén, " +
+    "excepto los usuarios.\n\n" +
+    "Exporta antes una copia de seguridad y cierra " +
+    "la aplicación en los demás teléfonos.\n\n" +
+    "¿Continuar?"
+  )) return;
+
+  const texto = prompt(
+    "Escribe exactamente:\nBORRAR SISTEMA"
+  );
+
+  if(texto !== "BORRAR SISTEMA"){
+    alert("Operación cancelada.");
+    return;
+  }
+
+  try{
+    const resultado = await baseDatos.ref("almacen").transaction(
+      actual => {
+        if(!actual || !actual.usuarios){
+          return;
+        }
+
+        // Conserva los usuarios actuales del servidor.
+        // Elimina todas las demás ramas de almacen.
+        return {usuarios: actual.usuarios};
+      },
+      undefined,
+      false
+    );
+
+    if(!resultado.committed){
+      alert(
+        "No se borró nada: no se encontró " +
+        "la lista de usuarios que se debe conservar."
+      );
+      return;
+    }
+
+    datos = {
+      usuarios: resultado.snapshot.val().usuarios || [],
+      materiales: [],
+      productos: [],
+      kanban: [],
+      movimientos: [],
+      bitacora: [],
+      sesion: datos.sesion
+    };
+
+    componentesTemporales = [];
+    pestana = "mp";
+
+    localStorage.setItem(
+      "almacenKanbanMultiusuario",
+      JSON.stringify(datos)
+    );
+
+    mostrar();
+
+    alert(
+      "Sistema reiniciado. Se conservaron los usuarios."
+    );
+
+  }catch(error){
+    console.error(error);
+
+    alert(
+      "No se confirmó el reinicio:\n" +
+      error.code + "\n" + error.message
+    );
+  }
+};
+  /* =====================================
+   CREAR USUARIOS DESDE EL ENCARGADO
+===================================== */
+
+/* Conserva el panel que ya existe y
+   añade el formulario de usuarios. */
+
+const panelSistemasSinUsuarios = panelSistemas;
+
+panelSistemas = function(){
+  if(!exigirEncargado()) return;
+
+  panelSistemasSinUsuarios();
+
+  const tarjeta = document.createElement("div");
+  tarjeta.className = "tarjeta";
+  tarjeta.id = "altaUsuariosSistemas";
+
+  tarjeta.innerHTML = `
+    <h2>Crear usuario</h2>
+
+    <input
+      id="altaUsuarioNombre"
+      placeholder="Nombre de usuario"
+      autocomplete="off"
+    >
+
+    <input
+      id="altaUsuarioClave"
+      type="password"
+      placeholder="Contraseña"
+      autocomplete="new-password"
+    >
+
+    <input
+      id="altaUsuarioRepetir"
+      type="password"
+      placeholder="Repetir contraseña"
+      autocomplete="new-password"
+    >
+
+    <select id="altaUsuarioRol">
+      <option>Almacenista</option>
+      <option>Supervisor de almacén</option>
+      <option>Operador de producción</option>
+      <option>Líder de producción</option>
+      <option>Control de calidad</option>
+      <option>Planeación</option>
+      <option>Registro / sistemas</option>
+      <option>Entregas / logística</option>
+      <option>Presentador</option>
+      <option>Auditor</option>
+    </select>
+
+    <button
+      id="botonAltaUsuario"
+      class="verde"
+      onclick="crearUsuarioDesdeSistemas()"
+    >
+      Crear usuario
+    </button>
+
+    <p>
+      Las cuentas nuevas no reciben los permisos
+      exclusivos del encargado de sistemas.
+    </p>
+  `;
+
+  document.getElementById("contenido").prepend(tarjeta);
+};
+
+async function crearUsuarioDesdeSistemas(){
+  if(!exigirEncargado()) return;
+
+  const usuario = document.getElementById(
+    "altaUsuarioNombre"
+  ).value.trim();
+
+  const contrasena = document.getElementById(
+    "altaUsuarioClave"
+  ).value;
+  
+  const repetir = document.getElementById(
+    "altaUsuarioRepetir"
+  ).value;
+
+  const rol = document.getElementById(
+    "altaUsuarioRol"
+  ).value;
+
+  if(!usuario || !contrasena.trim()){
+    alert("Escribe un usuario y una contraseña.");
+    return;
+  }
+
+  // El inicio de sesión actual elimina espacios
+  // al principio y al final de la contraseña.
+  if(contrasena !== contrasena.trim()){
+    alert(
+      "La contraseña no debe empezar ni terminar con espacios."
+    );
+    return;
+  }
+
+  if(contrasena !== repetir){
+    alert("Las contraseñas no coinciden.");
+    return;
+  }
+
+  if(usuario.toLowerCase() === "encargado de sistemas"){
+    alert(
+      "Ese nombre está reservado para la cuenta principal."
+    );
+    return;
+  }
+
+  const rolesPermitidos = [
+    "Almacenista",
+    "Supervisor de almacén",
+    "Operador de producción",
+    "Líder de producción",
+    "Control de calidad",
+    "Planeación",
+    "Registro / sistemas",
+    "Entregas / logística",
+    "Presentador",
+    "Auditor"
+  ];
+
+  if(!rolesPermitidos.includes(rol)){
+    alert("Selecciona un rol válido.");
+    return;
+  }
+
+  if(!confirm(
+    "¿Crear el usuario \"" + usuario +
+    "\" con el rol \"" + rol + "\"?"
+  )) return;
+
+  const boton = document.getElementById("botonAltaUsuario");
+  boton.disabled = true;
+  boton.textContent = "Guardando...";
+
+  try{
+    const resultado = await baseDatos
+      .ref("almacen/usuarios")
+      .transaction(actual => {
+        const usuarios = actual
+          ? Object.values(actual).filter(Boolean)
+          : [];
+
+        const existe = usuarios.some(cuenta =>
+          String(cuenta.usuario || "")
+            .trim()
+            .toLowerCase() === usuario.toLowerCase()
+        );
+
+        if(existe){
+          return;
+        }
+
+        usuarios.push({
+          usuario,
+          contrasena,
+          rol
+        });
+
+        return usuarios;
+      }, undefined, false);
+
+    if(!resultado.committed){
+      alert(
+        "No se creó la cuenta: ya existe un usuario " +
+        "con ese nombre."
+      );
+      return;
+    }
+
+    datos.usuarios = Object.values(
+      resultado.snapshot.val() || {}
+    ).filter(Boolean);
+
+    localStorage.setItem(
+      "almacenKanbanMultiusuario",
+      JSON.stringify(datos)
+    );
+
+    alert(
+      "Usuario creado en Firebase.\n\n" +
+      "Usuario: " + usuario + "\n" +
+      "Rol: " + rol
+    );
+
+    if(esEncargado()){
+      panelSistemas();
+    }
+
+  }catch(error){
+    console.error("Error al crear usuario:", error);
+
+    alert(
+      "No se pudo crear el usuario en Firebase:\n" +
+      error.code + "\n" +
+      error.message
+    );
+
+  }finally{
+    if(boton.isConnected){
+      boton.disabled = false;
+      boton.textContent = "Crear usuario";
+    }
+  }
+}
+  /* Conservar los campos del diseño al actualizar la pantalla. */
+
+const verDisenoConCodigoOriginal = verDiseno;
+
+verDiseno = function(){
+  const campos = [
+    "nombreProducto",
+    "descripcionProducto",
+    "codigoBarrasProducto"
+  ];
+
+  const valores = {};
+
+  campos.forEach(id => {
+    const campo = document.getElementById(id);
+
+    if(campo){
+      valores[id] = campo.value;
+    }
+  });
+
+  verDisenoConCodigoOriginal();
+
+  campos.forEach(id => {
+    const campo = document.getElementById(id);
+
+    if(
+      campo &&
+      Object.prototype.hasOwnProperty.call(valores, id)
+    ){
+      campo.value = valores[id];
+    }
+  });
+};
+pantallaLogin();
+  /* =========================================================
+   KANBAN V2: ROLES, SOLICITUDES, CALIDAD Y ENTREGAS
+
+   REQUIERE:
+   - firebase inicializado
+   - const baseDatos = firebase.database();
+   - Los elementos originales:
+     pantallaLogin, aplicacion, menu, contenido, infoUsuario
+
+   PEGAR UNA SOLA VEZ AL FINAL DEL SCRIPT.
+========================================================= */
+
+(function(){
+"use strict";
+
+if(window.K2){
+  alert("El bloque KANBAN V2 ya está cargado.");
+  return;
+}
+
+const K = window.K2 = {};
+const ref = baseDatos.ref("almacen");
+
+const R = {
+  almacen: "Almacenista",
+  supervisor: "Supervisor de almacén",
+  operador: "Operador de producción",
+  lider: "Líder de producción",
+  planeacion: "Planeación",
+  sistemas: "Registro / sistemas",
+  logistica: "Entregas / logística",
+  calidad: "Control de calidad"
+};
+
+const listas = [
+  "usuarios", "materiales", "productos", "kanban",
+  "movimientos", "bitacora", "solicitudes",
+  "calidad", "envios", "informes"
+];
+
+let d = {};
+let sesion = null;
+let vista = "";
+let listo = false;
+let ocupado = false;
+let pendiente = false;
+let streamCamara = null;
+let lecturaCamara = 0;
+
+let borrador = {
+  codigo: "",
+  nombre: "",
+  descripcion: "",
+  componentes: [],
+  editando: false
+};
+
+function normalizar(valor){
+  const copia = JSON.parse(JSON.stringify(valor || {}));
+
+  listas.forEach(nombre => {
+    copia[nombre] = Array.isArray(copia[nombre])
+      ? copia[nombre].filter(x => x != null)
+      : Object.values(copia[nombre] || {}).filter(x => x != null);
+  });
+
+  // La sesión no se comparte entre teléfonos.
+  delete copia.sesion;
+
+  return copia;
+}
+
+function h(valor){
+  return String(valor == null ? "" : valor)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function id(){
+  return Date.now().toString(36) + "-" +
+    Math.random().toString(36).slice(2, 10);
+}
+
+function ahora(){
+  return new Date().toISOString();
+}
+
+function fechaTexto(valor){
+  if(!valor) return "";
+  const fecha = new Date(valor);
+  return Number.isNaN(fecha.getTime())
+    ? String(valor)
+    : fecha.toLocaleString("es-MX");
+}
+
+function campo(nombre){
+  const elemento = document.getElementById(nombre);
+  return elemento ? elemento.value.trim() : "";
+}
+
+function numero(valor, permitirCero = false){
+  const n = Number(valor);
+
+  if(
+    String(valor).trim() === "" ||
+    !Number.isFinite(n) ||
+    (permitirCero ? n < 0 : n <= 0)
+  ){
+    throw new Error("Escribe una cantidad válida.");
+  }
+
+  return n;
+}
+
+function entero(valor){
+  const n = numero(valor);
+  if(!Number.isSafeInteger(n)){
+    throw new Error("La cantidad de productos debe ser un entero positivo.");
+  }
+  return n;
+}
+
+function cuentaActual(base){
+  return base.usuarios.find(u =>
+    sesion && u.usuario === sesion.usuario
+  );
+}
+
+function esAdmin(cuenta){
+  return !!cuenta &&
+    String(cuenta.usuario).trim().toLowerCase() ===
+      "encargado de sistemas" &&
+    cuenta.rol === R.sistemas;
+}
+
+function puede(accion, cuenta = sesion){
+  if(!cuenta) return false;
+  if(esAdmin(cuenta)) return true;
+
+  const permisos = {
+    mpAgregar: [R.almacen, R.supervisor, R.sistemas],
+    mpEditar: [R.supervisor, R.sistemas],
+    mpBorrar: [R.supervisor],
+    resolver: [R.almacen, R.supervisor, R.sistemas],
+    solicitar: [R.operador, R.lider, R.sistemas],
+    fabricar: [R.operador, R.lider, R.sistemas],
+    produccionEditar: [R.lider, R.sistemas],
+    produccionRetirar: [R.lider],
+    kanbanCrear: [R.lider, R.sistemas],
+    disenar: [R.planeacion, R.sistemas],
+    inspeccionar: [R.calidad, R.sistemas],
+    enviar: [R.logistica, R.sistemas],
+    ptEditar: [R.sistemas],
+    administrar: []
+  };
+
+  return (permisos[accion] || []).includes(cuenta.rol);
+}
+
+function exigir(accion, cuenta){
+  if(!puede(accion, cuenta)){
+    throw new Error("Tu perfil no tiene permiso para esta operación.");
+  }
+}
+
+function log(base, texto){
+  base.bitacora.unshift(
+    "[" + new Date().toLocaleString("es-MX") + "] " +
+    sesion.usuario + ": " + texto
+  );
+}
+
+function movimiento(base, tipo, material, cantidad, ruta){
+  base.movimientos.unshift({
+    id: id(),
+    fecha: new Date().toLocaleString("es-MX"),
+    tipo,
+    codigo: material.codigo,
+    material: material.nombre,
+    cantidad,
+    unidad: material.unidad || "pza",
+    ruta,
+    rol: sesion.rol,
+    usuario: sesion.usuario
+  });
+}
+
+/* Todas las operaciones nuevas pasan por una transacción.
+   El permiso se vuelve a comprobar contra la cuenta guardada. */
+
+async function cambiar(permiso, operacion){
+  if(!listo) throw new Error("Espera a que termine de cargar Firebase.");
+  if(ocupado) throw new Error("Espera a que termine la operación anterior.");
+  if(!sesion) throw new Error("Inicia sesión.");
+
+  ocupado = true;
+  let causa = "";
+
+  try{
+    const resultado = await ref.transaction(actual => {
+      causa = "";
+
+      // Firebase puede ejecutar primero con caché vacía.
+      // Se devuelve null para esperar los datos del servidor.
+      if(actual === null) return null;
+
+      const base = normalizar(actual);
+      const cuenta = cuentaActual(base);
+
+      try{
+        if(!cuenta){
+          throw new Error("Tu cuenta ya no existe.");
+        }
+
+        exigir(permiso, cuenta);
+
+        const reemplazo = operacion(base, cuenta);
+        return reemplazo || base;
+
+      }catch(error){
+        causa = error.message;
+        return;
+      }
+    }, undefined, false);
+
+    if(!resultado.committed){
+      throw new Error(causa || "La operación fue cancelada.");
+    }
+
+    const nuevo = resultado.snapshot.val();
+
+    if(!nuevo){
+      throw new Error("No existe información del almacén en Firebase.");
+    }
+
+    d = normalizar(nuevo);
+    actualizarSesion();
+    pendiente = false;
+
+    return true;
+
+  }finally{
+    ocupado = false;
+  }
+}
+
+function actualizarSesion(){
+  if(!sesion) return;
+
+  const cuenta = cuentaActual(d);
+
+  if(!cuenta){
+    sesion = null;
+    sessionStorage.removeItem("kanbanV2Sesion");
+    return;
+  }
+
+  sesion = {usuario: cuenta.usuario, rol: cuenta.rol};
+}
+
+function boton(accion, texto, argumentos = [], clase = "azul"){
+  const llamada = "K2.run(" +
+    [accion, ...argumentos].map(x => JSON.stringify(x)).join(",") +
+    ")";
+
+  return `<button class="${h(clase)}"
+    onclick="${h(llamada)}">${h(texto)}</button>`;
+}
+
+function tarjeta(titulo, contenido){
+  return `<div class="tarjeta">
+    <h2>${h(titulo)}</h2>${contenido}
+  </div>`;
+}
+
+function tabla(encabezados, filas){
+  return `<div style="overflow:auto">
+    <table>
+      <tr>${encabezados.map(x => `<th>${h(x)}</th>`).join("")}</tr>
+      ${filas.length ? filas.join("") :
+        `<tr><td colspan="${encabezados.length}">Sin registros</td></tr>`}
+    </table>
+  </div>`;
+}
+
+function input(nombre, texto, tipo = "text", valor = ""){
+  return `<input id="${h(nombre)}" type="${h(tipo)}"
+    placeholder="${h(texto)}" value="${h(valor)}">`;
+}
+
+function opcionesMateriales(){
+  return d.materiales.map(m =>
+    `<option value="${h(m.codigo)}">
+      ${h(m.codigo)} — ${h(m.nombre)}
+    </option>`
+  ).join("");
+}
+
+function opcionesProductos(){
+  return d.productos.map(p =>
+    `<option value="${h(p.codigo)}">
+      ${h(p.codigo)} — ${h(p.nombre)}
+      (PT: ${h(p.pt || 0)})
+    </option>`
+  ).join("");
+}
+
+function buscarMaterial(base, codigo){
+  const material = base.materiales.find(m => m.codigo === codigo);
+  if(!material) throw new Error("Materia prima no encontrada.");
+  return material;
+}
+
+function buscarProducto(base, codigo){
+  const producto = base.productos.find(p => p.codigo === codigo);
+  if(!producto) throw new Error("Producto no encontrado.");
+  return producto;
+}
+
+function codigoLibre(base, codigo, excluirProducto = false){
+  if(!codigo) throw new Error("Falta el código.");
+
+  if(
+    base.materiales.some(m => m.codigo === codigo) ||
+    base.kanban.some(k => k.codigo === codigo) ||
+    (!excluirProducto &&
+      base.productos.some(p => p.codigo === codigo))
+  ){
+    throw new Error("Ese código ya está registrado.");
+  }
+}
+
+/* =============== MENÚ Y SESIÓN =============== */
+
+function menu(){
+  if(!sesion) return [];
+
+  if(esAdmin(sesion)){
+    return [
+      ["mp", "MP"], ["ingreso", "Ingreso"],
+      ["produccion", "Producción"], ["pt", "PT"],
+      ["diseno", "Diseñar producto"],
+      ["calidad", "Control de calidad"],
+      ["envios", "Envíos y entregas"],
+      ["registros", "Registros"],
+      ["admin", "Administración"]
+    ];
+  }
+
+  const menus = {
+    [R.almacen]: [["mp", "MP"], ["ingreso", "Ingreso"]],
+    [R.supervisor]: [["mp", "MP"], ["ingreso", "Ingreso"]],
+    [R.operador]: [["produccion", "Producción"]],
+    [R.lider]: [["produccion", "Producción"], ["pt", "PT"]],
+    [R.planeacion]: [["diseno", "Diseñar producto"]],
+    [R.calidad]: [["pt", "PT"], ["calidad", "Control de calidad"]],
+    [R.logistica]: [["envios", "Envíos y entregas"]],
+    [R.sistemas]: [
+      ["mp", "MP"], ["ingreso", "Ingreso"],
+      ["produccion", "Producción"], ["pt", "PT"],
+      ["diseno", "Diseñar producto"],
+      ["calidad", "Control de calidad"],
+      ["envios", "Envíos y entregas"],
+      ["registros", "Registros"]
+    ]
+  };
+
+  return menus[sesion.rol] || [];
+}
+
+K.login = async function(){
+  if(!listo) throw new Error("Firebase todavía está cargando.");
+
+  const usuario = campo("kUsuario");
+  const clave = document.getElementById("kClave").value;
+
+  const cuenta = d.usuarios.find(u =>
+    u.usuario === usuario && u.contrasena === clave
+  );
+
+  if(!cuenta) throw new Error("Usuario o contraseña incorrectos.");
+
+  if(!Object.values(R).includes(cuenta.rol)){
+    throw new Error(
+      "Este rol ya no está activo. El encargado debe reasignarlo."
+    );
+  }
+
+  sesion = {usuario: cuenta.usuario, rol: cuenta.rol};
+
+  sessionStorage.setItem(
+    "kanbanV2Sesion",
+    JSON.stringify(sesion)
+  );
+
+  vista = "";
+  K.show();
+};
+
+K.salir = function(){
+  detenerCamara();
+  sesion = null;
+  sessionStorage.removeItem("kanbanV2Sesion");
+  K.show();
+};
+
+K.ir = function(destino){
+  vista = destino;
+  pendiente = false;
+  K.show();
+};
+
+function detenerCamara(){
+  lecturaCamara++;
+
+  if(streamCamara){
+    streamCamara.getTracks().forEach(t => t.stop());
+    streamCamara = null;
+  }
+}
+
+K.escanear = async function(destino){
+  detenerCamara();
+
+  if(!navigator.mediaDevices || !window.BarcodeDetector){
+    throw new Error(
+      "Este navegador no permite este escáner. " +
+      "Escribe el código o usa un lector físico."
+    );
+  }
+
+  const contenedor = document.getElementById("kCamara");
+
+  if(!contenedor) throw new Error("No hay visor de cámara.");
+
+  const formatos = await BarcodeDetector.getSupportedFormats();
+  const permitidos = ["code_128", "ean_13", "ean_8", "code_39", "qr_code"]
+    .filter(f => formatos.includes(f));
+
+  if(!permitidos.length){
+    throw new Error("No hay formatos compatibles. Escribe el código.");
+  }
+
+  const token = lecturaCamara;
+  const flujo = await navigator.mediaDevices.getUserMedia({
+    video: {facingMode: "environment"}
+  });
+
+  if(token !== lecturaCamara){
+    flujo.getTracks().forEach(t => t.stop());
+    return;
+  }
+
+  streamCamara = flujo;
+  contenedor.innerHTML = "<video autoplay playsinline muted></video>";
+
+  const video = contenedor.querySelector("video");
+  video.srcObject = flujo;
+  await video.play();
+
+  const detector = new BarcodeDetector({formats: permitidos});
+
+  async function leer(){
+    if(token !== lecturaCamara) return;
+
+    try{
+      const resultados = await detector.detect(video);
+
+      if(resultados.length){
+        const campoDestino = document.getElementById(destino);
+
+        if(campoDestino) campoDestino.value = resultados[0].rawValue;
+
+        detenerCamara();
+        contenedor.textContent = "Código capturado.";
+        return;
+      }
+    }catch(error){
+      // Se vuelve a intentar en el siguiente cuadro.
+    }
+
+    requestAnimationFrame(leer);
+  }
+
+  leer();
+};
+
+K.show = function(){
+  detenerCamara();
+
+  const login = document.getElementById("pantallaLogin");
+  const app = document.getElementById("aplicacion");
+
+  if(!sesion){
+    app.style.display = "none";
+
+    login.innerHTML = tarjeta("Iniciar sesión",
+      input("kUsuario", "Usuario") +
+      input("kClave", "Contraseña", "password") +
+      boton("login", listo ? "Entrar" : "Esperando Firebase...") +
+      "<p>Las cuentas las administra el encargado de sistemas.</p>"
+    );
+
+    return;
+  }
+
+  login.innerHTML = "";
+  app.style.display = "block";
+
+  document.getElementById("infoUsuario").textContent =
+    "Usuario: " + sesion.usuario + " | Rol: " + sesion.rol;
+
+  const opciones = menu();
+
+  if(!opciones.some(m => m[0] === vista)){
+    vista = opciones.length ? opciones[0][0] : "";
+  }
+
+  document.getElementById("menu").innerHTML =
+    opciones.map(m => boton("ir", m[1], [m[0]])).join("") +
+    boton("salir", "Salir", [], "rojo");
+
+  const paginas = {
+    mp: pantallaMP,
+    ingreso: pantallaIngreso,
+    produccion: pantallaProduccion,
+    pt: pantallaPT,
+    diseno: pantallaDiseno,
+    calidad: pantallaCalidad,
+    envios: pantallaEnvios,
+    registros: pantallaRegistros,
+    admin: pantallaAdmin
+  };
+
+  document.getElementById("contenido").innerHTML =
+    `<p id="kAviso"></p>` +
+    (paginas[vista] ? paginas[vista]() :
+      tarjeta("Sin acceso", "Solicita al encargado que revise tu rol."));
+};
+
+/* =============== MP E INGRESO =============== */
+
+function solicitudesHTML(){
+  const filas = d.solicitudes.map(s => {
+    const material = d.materiales.find(m => m.codigo === s.codigoMaterial);
+    const stock = material ? Number(material.mp || 0) : 0;
+
+    const acciones = s.estado === "pendiente" && puede("resolver")
+      ? boton("resolver", "Aceptar", [s.id, true], "verde") +
+        boton("resolver", "Rechazar", [s.id, false], "rojo")
+      : h(s.estado);
+
+    return `<tr>
+      <td>${h(s.id)}</td>
+      <td>${h(s.material)}</td>
+      <td>${h(s.cantidad)}</td>
+      <td>${h(stock)}</td>
+      <td>${h(stock - Number(s.cantidad))}</td>
+      <td>${h(s.usuario)}</td>
+      <td>${acciones}</td>
+    </tr>`;
+  });
+
+  return tarjeta("Solicitudes Kanban",
+    tabla(
+      ["Solicitud", "Material", "Solicitado", "Stock MP",
+       "Quedaría", "Solicitante", "Acción"],
+      filas
+    )
+  );
+}
+
+function pantallaMP(){
+  const filas = d.materiales.map(m => `<tr>
+    <td>${h(m.codigo)}</td>
+    <td>${h(m.nombre)}</td>
+    <td>${h(m.mp || 0)} ${h(m.unidad)}</td>
+    <td>
+      ${puede("mpEditar")
+        ? boton("editarMP", "Corregir", [m.codigo]) : ""}
+      ${puede("mpBorrar")
+        ? boton("borrarMP", "Eliminar", [m.codigo], "rojo") : ""}
+    </td>
+  </tr>`);
+
+  return tarjeta("Materia prima",
+    tabla(["Código", "Material", "Existencias", "Acciones"], filas)
+  ) + solicitudesHTML();
+}
+
+function pantallaIngreso(){
+  return tarjeta("Registrar entrada",
+    input("kEntradaCodigo", "Código de materia prima") +
+    boton("escanear", "Escanear código", ["kEntradaCodigo"]) +
+    input("kEntradaCantidad", "Cantidad recibida", "number") +
+    boton("entrada", "Registrar entrada", [], "verde") +
+    `<div id="kCamara"></div>`
+  ) + tarjeta("Crear materia prima",
+    input("kNuevoCodigo", "Código") +
+boton("escanear", "Escanear código", ["kNuevoCodigo"]) +
+    input("kNuevoNombre", "Nombre") +
+    input("kNuevaUnidad", "Unidad: pza, kg, m") +
+    input("kNuevoStock", "Cantidad inicial", "number", "0") +
+    boton("crearMaterial", "Crear materia prima", [], "verde")
+  );
+}
+
+K.crearMaterial = async function(){
+  const codigo = campo("kNuevoCodigo");
+  const nombre = campo("kNuevoNombre");
+  const unidad = campo("kNuevaUnidad");
+  const cantidad = numero(campo("kNuevoStock"), true);
+
+  if(!nombre || !unidad) throw new Error("Faltan nombre o unidad.");
+
+  await cambiar("mpAgregar", base => {
+    codigoLibre(base, codigo);
+
+    base.materiales.push({
+      codigo, nombre, unidad,
+      mp: cantidad, produccion: 0
+    });
+
+    movimiento(base, "Alta de material",
+      {codigo, nombre, unidad}, cantidad, "Proveedor → MP");
+
+    log(base, "Creó materia prima " + codigo);
+  });
+
+  K.show();
+};
+
+K.entrada = async function(){
+  const codigo = campo("kEntradaCodigo");
+  const cantidad = numero(campo("kEntradaCantidad"));
+
+  await cambiar("mpAgregar", base => {
+    const m = buscarMaterial(base, codigo);
+    m.mp = Number(m.mp || 0) + cantidad;
+    movimiento(base, "Entrada MP", m, cantidad, "Proveedor → MP");
+    log(base, "Registró entrada de " + cantidad + " para " + codigo);
+  });
+
+  K.show();
+};
+
+K.editarMP = async function(codigo){
+  const m = buscarMaterial(d, codigo);
+
+  const nombre = prompt("Nombre del material:", m.nombre);
+  if(nombre === null) return;
+
+  const unidad = prompt("Unidad:", m.unidad);
+  if(unidad === null) return;
+
+  const valor = prompt("Existencias correctas en MP:", m.mp || 0);
+  if(valor === null) return;
+
+  const cantidad = numero(valor, true);
+  const motivo = prompt("Motivo de la corrección:");
+  if(!motivo || !motivo.trim()) return;
+
+  if(!nombre.trim() || !unidad.trim()){
+    throw new Error("Nombre y unidad son obligatorios.");
+  }
+
+  await cambiar("mpEditar", base => {
+    const actual = buscarMaterial(base, codigo);
+    const diferencia = cantidad - Number(actual.mp || 0);
+
+    actual.nombre = nombre.trim();
+    actual.unidad = unidad.trim();
+    actual.mp = cantidad;
+
+    movimiento(base, "Ajuste MP", actual, diferencia, motivo.trim());
+    log(base, "Corrigió MP " + codigo + ": " + motivo.trim());
+  });
+
+  K.show();
+};
+
+K.borrarMP = async function(codigo){
+  if(!confirm("¿Eliminar la materia prima " + codigo + "?")) return;
+
+  await cambiar("mpBorrar", base => {
+    const m = buscarMaterial(base, codigo);
+
+    if(Number(m.mp || 0) !== 0 || Number(m.produccion || 0) !== 0){
+      throw new Error("Primero deja sus existencias en cero mediante ajustes.");
+    }
+
+    if(
+      base.productos.some(p =>
+        (p.componentes || []).some(c => c.codigo === codigo)
+      ) ||
+      base.kanban.some(k => k.codigoMaterial === codigo) ||
+      base.solicitudes.some(s =>
+        s.codigoMaterial === codigo && s.estado === "pendiente"
+      )
+    ){
+      throw new Error("Tiene productos, Kanban o solicitudes vinculadas.");
+    }
+
+    base.materiales = base.materiales.filter(m => m.codigo !== codigo);
+    log(base, "Eliminó materia prima " + codigo);
+  });
+
+  K.show();
+};
+
+K.resolver = async function(solicitudId, aprobar){
+  const motivo = aprobar ? "" : prompt("Motivo del rechazo:");
+  if(!aprobar && (!motivo || !motivo.trim())) return;
+
+  if(aprobar && !confirm("¿Autorizar y entregar esta solicitud?")) return;
+
+  await cambiar("resolver", base => {
+    const s = base.solicitudes.find(x => x.id === solicitudId);
+
+    if(!s || s.estado !== "pendiente"){
+      throw new Error("La solicitud ya fue resuelta o no existe.");
+    }
+
+    if(aprobar){
+      const m = buscarMaterial(base, s.codigoMaterial);
+      const cantidad = numero(s.cantidad);
+
+      if(Number(m.mp || 0) < cantidad){
+        throw new Error("Ya no hay suficiente stock en MP.");
+      }
+
+      m.mp = Number(m.mp || 0) - cantidad;
+      m.produccion = Number(m.produccion || 0) + cantidad;
+
+      movimiento(base, "Entrega Kanban", m, cantidad, "MP → Producción");
+    }
+
+    s.estado = aprobar ? "aprobada" : "rechazada";
+    s.resueltaPor = sesion.usuario;
+    s.fechaResolucion = ahora();
+    s.motivo = motivo || "";
+
+    log(base, s.estado + " solicitud " + solicitudId);
+  });
+
+  K.show();
+};
+
+/* =============== PRODUCCIÓN =============== */
+
+function pantallaProduccion(){
+  const filas = d.materiales.map(m => `<tr>
+    <td>${h(m.codigo)}</td>
+    <td>${h(m.nombre)}</td>
+    <td>${h(m.produccion || 0)} ${h(m.unidad)}</td>
+    <td>
+      ${puede("produccionEditar")
+        ? boton("ajustarProduccion", "Corregir", [m.codigo, false]) : ""}
+      ${puede("produccionRetirar")
+        ? boton("ajustarProduccion", "Retirar MP", [m.codigo, true], "rojo") : ""}
+    </td>
+  </tr>`);
+
+  const solicitudes = d.solicitudes
+    .filter(s => s.usuario === sesion.usuario || sesion.rol !== R.operador)
+    .map(s => `<tr>
+      <td>${h(s.material)}</td>
+      <td>${h(s.cantidad)}</td>
+      <td>${h(s.estado)}</td>
+      <td>${h(s.motivo || "")}</td>
+    </tr>`);
+
+  let contenido = tarjeta("Solicitar MP por Kanban",
+    input("kSolicitarCodigo", "Código de tarjeta Kanban") +
+    boton("escanear", "Escanear Kanban", ["kSolicitarCodigo"]) +
+    boton("solicitar", "Enviar solicitud a almacén", [], "naranja") +
+    `<div id="kCamara"></div>`
+  );
+
+  contenido += tarjeta("Material en Producción",
+    tabla(["Código", "Material", "Disponible", "Acciones"], filas)
+  );
+
+  contenido += tarjeta("Estado de solicitudes",
+    tabla(["Material", "Cantidad", "Estado", "Motivo"], solicitudes)
+  );
+
+  contenido += tarjeta("Registrar fabricación",
+    `<select id="kFabricarCodigo">
+      <option value="">Selecciona producto</option>
+      ${opcionesProductos()}
+    </select>` +
+    input("kFabricarCantidad", "Cantidad fabricada", "number", "1") +
+    boton("fabricar", "Registrar y enviar a PT o Calidad", [], "verde")
+  );
+
+  if(puede("kanbanCrear")){
+    contenido += tarjeta("Registrar tarjeta Kanban",
+      `<select id="kKanbanMaterial">${opcionesMateriales()}</select>` +
+      input("kKanbanCodigo", "Código de barras de la tarjeta") +
+boton("escanear", "Escanear Kanban", ["kKanbanCodigo"]) +
+      input("kKanbanCantidad", "Cantidad por tarjeta", "number") +
+      `<select id="kKanbanBin">
+        <option>BIN 1</option><option>BIN 2</option><option>BIN 3</option>
+      </select>` +
+      boton("crearKanban", "Registrar Kanban", [], "verde")
+    );
+  }
+
+  contenido += tarjeta("Tarjetas Kanban",
+    tabla(["Tarjeta", "Material", "Cantidad", "Bin"],
+      d.kanban.map(k => `<tr>
+        <td>${h(k.codigo)}</td><td>${h(k.material)}</td>
+        <td>${h(k.cantidad)}</td><td>${h(k.bin)}</td>
+      </tr>`)
+    )
+  );
+
+  contenido += tarjeta("Informes de Calidad",
+    tabla(["Fecha", "Producto", "Unidad", "Motivo", "Inspector"],
+      d.informes.map(i => `<tr>
+        <td>${h(fechaTexto(i.fecha))}</td>
+        <td>${h(i.producto)}</td>
+        <td>${h(i.unidadId)}</td>
+        <td>${h(i.motivo)}</td>
+        <td>${h(i.inspector)}</td>
+      </tr>`)
+    )
+  );
+
+  return contenido;
+}
+
+K.solicitar = async function(){
+  const codigo = campo("kSolicitarCodigo");
+  const solicitudId = id();
+
+  await cambiar("solicitar", base => {
+    const k = base.kanban.find(x => x.codigo === codigo);
+    if(!k) throw new Error("Tarjeta Kanban no encontrada.");
+
+    if(base.solicitudes.some(s =>
+      s.kanban === codigo && s.estado === "pendiente"
+    )){
+      throw new Error("Esta tarjeta ya tiene una solicitud pendiente.");
+    }
+
+    const m = buscarMaterial(base, k.codigoMaterial);
+    const cantidad = numero(k.cantidad);
+
+    base.solicitudes.unshift({
+      id: solicitudId,
+      kanban: codigo,
+      codigoMaterial: m.codigo,
+      material: m.nombre,
+      cantidad,
+      unidad: m.unidad,
+      usuario: sesion.usuario,
+      fecha: ahora(),
+      estado: "pendiente"
+    });
+
+    log(base, "Solicitó MP mediante Kanban " + codigo);
+  });
+
+  K.show();
+};
+
+K.crearKanban = async function(){
+  const codigo = campo("kKanbanCodigo");
+  const codigoMaterial = campo("kKanbanMaterial");
+  const cantidad = numero(campo("kKanbanCantidad"));
+  const bin = campo("kKanbanBin");
+
+  await cambiar("kanbanCrear", base => {
+    codigoLibre(base, codigo);
+    const m = buscarMaterial(base, codigoMaterial);
+
+    base.kanban.push({
+      codigo, codigoMaterial, cantidad, bin,
+      material: m.nombre, unidad: m.unidad
+    });
+
+    log(base, "Registró Kanban " + codigo);
+  });
+
+  K.show();
+};
+
+K.ajustarProduccion = async function(codigo, retirar){
+  const valor = prompt(
+    retirar ? "Cantidad que retirarás:" : "Existencia correcta en Producción:"
+  );
+  if(valor === null) return;
+
+  const cantidad = numero(valor, !retirar);
+  const motivo = prompt("Motivo obligatorio:");
+  if(!motivo || !motivo.trim()) return;
+
+  await cambiar(
+    retirar ? "produccionRetirar" : "produccionEditar",
+    base => {
+      const m = buscarMaterial(base, codigo);
+      const anterior = Number(m.produccion || 0);
+
+      if(retirar && cantidad > anterior){
+        throw new Error("No puedes retirar más de lo disponible.");
+      }
+
+      m.produccion = retirar ? anterior - cantidad : cantidad;
+
+      movimiento(base,
+        retirar ? "Retiro Producción" : "Ajuste Producción",
+        m, m.produccion - anterior, motivo.trim()
+      );
+
+      log(base, "Modificó Producción " + codigo + ": " + motivo.trim());
+    }
+  );
+
+  K.show();
+};
+
+K.fabricar = async function(){
+  const codigo = campo("kFabricarCodigo");
+  const cantidad = entero(campo("kFabricarCantidad"));
+
+  if(cantidad > 1000){
+    throw new Error("Registra como máximo 1000 unidades por operación.");
+  }
+
+  // Se sortea ANTES de la transacción.
+  // Los reintentos no vuelven a cambiar el resultado.
+  const denominador = sesion.rol === R.operador ? 3 : 5;
+
+  const unidades = Array.from({length: cantidad}, () => ({
+    id: id(),
+    aCalidad: Math.floor(Math.random() * denominador) === 0
+  }));
+
+  const cantidadCalidad = unidades.filter(u => u.aCalidad).length;
+
+  if(!confirm(
+    "¿Registrar " + cantidad + " unidades fabricadas?\n" +
+    "Se consumirán sus componentes de Producción."
+  )) return;
+
+  await cambiar("fabricar", (base, cuenta) => {
+    const esperado = cuenta.rol === R.operador ? 3 : 5;
+
+    if(esperado !== denominador){
+      throw new Error("Tu rol cambió. Actualiza e intenta de nuevo.");
+    }
+
+    const p = buscarProducto(base, codigo);
+
+    if(!Array.isArray(p.componentes) || !p.componentes.length){
+      throw new Error("El producto no tiene componentes.");
+    }
+
+    const consumos = {};
+
+    p.componentes.forEach(c => {
+      const uso = numero(c.cantidad);
+      consumos[c.codigo] = (consumos[c.codigo] || 0) + uso * cantidad;
+    });
+
+    Object.entries(consumos).forEach(([codigoMP, total]) => {
+      const m = buscarMaterial(base, codigoMP);
+
+      if(Number(m.produccion || 0) < total){
+        throw new Error("Falta material en Producción: " + m.nombre);
+      }
+    });
+
+    Object.entries(consumos).forEach(([codigoMP, total]) => {
+      const m = buscarMaterial(base, codigoMP);
+      m.produccion = Number(m.produccion || 0) - total;
+
+      movimiento(base, "Consumo fabricación", m, total,
+        "Producción → Fabricación " + codigo);
+    });
+
+    p.pt = Number(p.pt || 0) + cantidad - cantidadCalidad;
+
+    unidades.filter(u => u.aCalidad).forEach(u => {
+      base.calidad.unshift({
+        id: u.id,
+        codigoProducto: codigo,
+        producto: p.nombre,
+        estado: "pendiente",
+        enviadoPor: sesion.usuario,
+        rolOrigen: sesion.rol,
+        fecha: ahora(),
+        probabilidad: "1/" + denominador
+      });
+    });
+
+    movimiento(base, "Fabricación", p, cantidad,
+      "Producción → PT/Calidad");
+
+    log(base,
+      "Fabricó " + cantidad + " de " + codigo +
+      "; a Calidad: " + cantidadCalidad +
+      "; a PT: " + (cantidad - cantidadCalidad)
+    );
+  });
+
+  K.show();
+
+  alert(
+    "Fabricación registrada.\n" +
+    "A PT: " + (cantidad - cantidadCalidad) + "\n" +
+    "A Calidad: " + cantidadCalidad
+  );
+};
+    /* =============== PT Y CALIDAD =============== */
+
+function pantallaPT(){
+  return tarjeta("Producto terminado disponible",
+    tabla(["Código", "Producto", "Stock PT", "Acciones"],
+      d.productos.map(p => `<tr>
+        <td>${h(p.codigo)}</td><td>${h(p.nombre)}</td>
+        <td>${h(p.pt || 0)}</td>
+        <td>${puede("ptEditar")
+          ? boton("ajustarPT", "Corregir", [p.codigo]) : ""}</td>
+      </tr>`)
+    )
+  ) + tarjeta("Pendiente de inspección",
+    tabla(["Unidad", "Producto", "Enviado por", "Fecha"],
+      d.calidad.filter(c => c.estado === "pendiente").map(c => `<tr>
+        <td>${h(c.id)}</td><td>${h(c.producto)}</td>
+        <td>${h(c.enviadoPor)}</td>
+        <td>${h(fechaTexto(c.fecha))}</td>
+      </tr>`)
+    )
+  );
+}
+
+K.ajustarPT = async function(codigo){
+  const p = buscarProducto(d, codigo);
+  const valor = prompt("Existencia correcta en PT:", p.pt || 0);
+  if(valor === null) return;
+
+  const cantidad = numero(valor, true);
+  if(!Number.isSafeInteger(cantidad)){
+    throw new Error("PT debe ser un número entero.");
+  }
+
+  const motivo = prompt("Motivo del ajuste:");
+  if(!motivo || !motivo.trim()) return;
+
+  await cambiar("ptEditar", base => {
+    const producto = buscarProducto(base, codigo);
+    const diferencia = cantidad - Number(producto.pt || 0);
+    producto.pt = cantidad;
+    movimiento(base, "Ajuste PT", producto, diferencia, motivo.trim());
+    log(base, "Ajustó PT " + codigo + ": " + motivo.trim());
+  });
+
+  K.show();
+};
+
+function pantallaCalidad(){
+  return tarjeta("Inspecciones",
+    tabla(["Unidad", "Producto", "Origen", "Estado", "Resultado"],
+      d.calidad.map(c => `<tr>
+        <td>${h(c.id)}</td>
+        <td>${h(c.producto)}</td>
+        <td>${h(c.enviadoPor)}<br>${h(c.rolOrigen)}</td>
+        <td>${h(c.estado)}</td>
+        <td>
+          ${c.estado === "pendiente" && puede("inspeccionar")
+            ? boton("inspeccionar", "Aprobar", [c.id, true], "verde") +
+              boton("inspeccionar", "Rechazar", [c.id, false], "rojo")
+            : h(c.observaciones || "")}
+        </td>
+      </tr>`)
+    )
+  );
+}
+
+K.inspeccionar = async function(unidadId, aprobar){
+  const observaciones = prompt(
+    aprobar ? "Observaciones de aprobación:" : "Motivo obligatorio del rechazo:"
+  );
+
+  if(observaciones === null) return;
+
+  if(!aprobar && !observaciones.trim()){
+    throw new Error("Escribe el motivo del rechazo.");
+  }
+
+  await cambiar("inspeccionar", base => {
+    const unidad = base.calidad.find(c => c.id === unidadId);
+
+    if(!unidad || unidad.estado !== "pendiente"){
+      throw new Error("Esta unidad ya fue inspeccionada.");
+    }
+
+    const p = buscarProducto(base, unidad.codigoProducto);
+
+    unidad.estado = aprobar ? "aprobado" : "rechazado";
+    unidad.inspector = sesion.usuario;
+    unidad.fechaInspeccion = ahora();
+    unidad.observaciones = observaciones.trim();
+
+    if(aprobar){
+      p.pt = Number(p.pt || 0) + 1;
+      movimiento(base, "Aprobación CC", p, 1, "Calidad → PT");
+    }else{
+      base.informes.unshift({
+        id: id(),
+        unidadId,
+        codigoProducto: p.codigo,
+        producto: p.nombre,
+        motivo: observaciones.trim(),
+        inspector: sesion.usuario,
+        produccionUsuario: unidad.enviadoPor,
+        fecha: ahora()
+      });
+
+      movimiento(base, "Rechazo CC", p, 1, "Calidad → Baja por defecto");
+    }
+
+    log(base, "Calidad " + unidad.estado + " unidad " + unidadId);
+  });
+
+  K.show();
+};
+
+/* =============== DISEÑO DE PRODUCTOS =============== */
+
+function pantallaDiseno(){
+  const componentes = borrador.componentes.map((c, i) => `<tr>
+    <td>${h(c.codigo)}</td>
+    <td>${h(c.cantidad)}</td>
+    <td>${boton("quitarComponente", "Quitar del diseño", [i], "rojo")}</td>
+  </tr>`);
+
+  return tarjeta("Diseñar producto",
+    input("kDisenoCodigo", "Código de barras del producto", "text",
+      borrador.codigo) +
+    boton("escanear", "Escanear código de producto", ["kDisenoCodigo"]) +
+    `<div id="kCamara"></div>` +
+    input("kDisenoNombre", "Nombre", "text", borrador.nombre) +
+    input("kDisenoDescripcion", "Descripción", "text",
+      borrador.descripcion) +
+    `<select id="kDisenoMaterial">${opcionesMateriales()}</select>` +
+    input("kDisenoCantidad", "Cantidad por unidad fabricada", "number") +
+    boton("agregarComponente", "Agregar componente") +
+    tabla(["Material", "Cantidad por unidad", "Acción"], componentes) +
+    boton("guardarDiseno",
+      borrador.editando ? "Guardar corrección" : "Crear producto",
+      [], "verde") +
+    boton("nuevoDiseno", "Limpiar formulario")
+  ) + tarjeta("Productos diseñados",
+    tabla(["Código", "Producto", "Acción"],
+      d.productos.map(p => `<tr>
+        <td>${h(p.codigo)}</td><td>${h(p.nombre)}</td>
+        <td>${boton("editarDiseno", "Editar diseño", [p.codigo])}</td>
+      </tr>`)
+    )
+  );
+}
+
+function capturarDiseno(){
+  borrador.codigo = campo("kDisenoCodigo");
+  borrador.nombre = campo("kDisenoNombre");
+  borrador.descripcion = campo("kDisenoDescripcion");
+}
+
+K.agregarComponente = function(){
+  exigir("disenar", sesion);
+  capturarDiseno();
+
+  const codigo = campo("kDisenoMaterial");
+  const cantidad = numero(campo("kDisenoCantidad"));
+
+  if(!codigo) throw new Error("Selecciona materia prima.");
+
+  const existente = borrador.componentes.find(c => c.codigo === codigo);
+
+  if(existente) existente.cantidad += cantidad;
+  else borrador.componentes.push({codigo, cantidad});
+
+  K.show();
+};
+
+K.quitarComponente = function(indice){
+  exigir("disenar", sesion);
+  capturarDiseno();
+  borrador.componentes.splice(indice, 1);
+  K.show();
+};
+
+K.nuevoDiseno = function(){
+  borrador = {
+    codigo: "", nombre: "", descripcion: "",
+    componentes: [], editando: false
+  };
+
+  K.show();
+};
+
+K.editarDiseno = function(codigo){
+  exigir("disenar", sesion);
+  const p = buscarProducto(d, codigo);
+
+  borrador = {
+    codigo: p.codigo,
+    nombre: p.nombre,
+    descripcion: p.descripcion || "",
+    componentes: JSON.parse(JSON.stringify(p.componentes || [])),
+    editando: p.codigo
+  };
+
+  K.show();
+};
+
+K.guardarDiseno = async function(){
+  capturarDiseno();
+  const copia = JSON.parse(JSON.stringify(borrador));
+
+  if(!copia.codigo || !copia.nombre || !copia.componentes.length){
+    throw new Error("Faltan código, nombre o componentes.");
+  }
+
+  await cambiar("disenar", base => {
+    copia.componentes.forEach(c => {
+      buscarMaterial(base, c.codigo);
+      numero(c.cantidad);
+    });
+
+    if(copia.editando){
+      if(copia.codigo !== copia.editando){
+        throw new Error("No cambies el código de un producto existente.");
+      }
+
+      const p = buscarProducto(base, copia.editando);
+      p.nombre = copia.nombre;
+      p.descripcion = copia.descripcion;
+      p.componentes = copia.componentes;
+
+      log(base, "Corrigió diseño " + copia.codigo);
+    }else{
+      codigoLibre(base, copia.codigo);
+
+      base.productos.push({
+        codigo: copia.codigo,
+        nombre: copia.nombre,
+        descripcion: copia.descripcion,
+        componentes: copia.componentes,
+        pt: 0
+      });
+
+      log(base, "Creó diseño " + copia.codigo);
+    }
+  });
+
+  K.nuevoDiseno();
+};
+
+/* =============== ENVÍOS =============== */
+
+function pantallaEnvios(){
+  return tarjeta("Registrar envío",
+    `<select id="kEnvioProducto">
+      <option value="">Selecciona producto</option>
+      ${opcionesProductos()}
+    </select>` +
+    input("kEnvioCantidad", "Cantidad", "number") +
+    input("kEnvioLugar", "Empresa, escuela o lugar") +
+    input("kEnvioDestinatario", "Nombre del destinatario") +
+    input("kEnvioDireccion", "Dirección completa") +
+    input("kEnvioFecha", "Fecha de envío", "date") +
+    input("kEnvioResponsable", "Responsable de entrega") +
+    input("kEnvioObservaciones", "Observaciones") +
+    boton("enviar", "Confirmar envío y descontar PT", [], "verde")
+  ) + tarjeta("Envíos y entregas",
+    tabla(
+      ["Folio", "Producto", "Cantidad", "Destino", "Fecha", "Estado", "Acción"],
+      d.envios.map(e => `<tr>
+        <td>${h(e.id)}</td>
+        <td>${h(e.producto)}</td>
+        <td>${h(e.cantidad)}</td>
+        <td>${h(e.lugar)}<br>${h(e.destinatario)}<br>${h(e.direccion)}</td>
+        <td>${h(e.fechaEnvio)}</td>
+        <td>${h(e.estado)}</td>
+        <td>${e.estado === "enviado"
+          ? boton("entregado", "Confirmar entrega", [e.id], "verde")
+          : h(e.recibidoPor || "")}</td>
+      </tr>`)
+    )
+  );
+}
+
+K.enviar = async function(){
+  const envio = {
+    id: id(),
+    codigoProducto: campo("kEnvioProducto"),
+    cantidad: entero(campo("kEnvioCantidad")),
+    lugar: campo("kEnvioLugar"),
+    destinatario: campo("kEnvioDestinatario"),
+    direccion: campo("kEnvioDireccion"),
+    fechaEnvio: campo("kEnvioFecha"),
+    responsable: campo("kEnvioResponsable"),
+    observaciones: campo("kEnvioObservaciones"),
+    estado: "enviado",
+    registradoPor: sesion.usuario,
+    fechaRegistro: ahora()
+  };
+
+  if(
+    !envio.codigoProducto || !envio.lugar ||
+    !envio.destinatario || !envio.direccion ||
+    !envio.fechaEnvio || !envio.responsable
+  ){
+    throw new Error("Completa todos los campos del envío.");
+  }
+
+  if(!confirm("¿Confirmar envío de " + envio.cantidad + " unidades?")) return;
+
+  await cambiar("enviar", base => {
+    const p = buscarProducto(base, envio.codigoProducto);
+
+    if(Number(p.pt || 0) < envio.cantidad){
+      throw new Error("No hay suficientes unidades disponibles en PT.");
+    }
+
+    p.pt = Number(p.pt || 0) - envio.cantidad;
+
+    base.envios.unshift({...envio, producto: p.nombre});
+
+    movimiento(base, "Envío", p, envio.cantidad,
+      "PT → " + envio.lugar);
+
+    log(base, "Registró envío " + envio.id);
+  });
+
+  K.show();
+};
+
+K.entregado = async function(envioId){
+  const recibidoPor = prompt("Nombre de quien recibió:");
+  if(!recibidoPor || !recibidoPor.trim()) return;
+
+  await cambiar("enviar", base => {
+    const envio = base.envios.find(e => e.id === envioId);
+
+    if(!envio || envio.estado !== "enviado"){
+      throw new Error("El envío ya fue entregado o no existe.");
+    }
+
+    envio.estado = "entregado";
+    envio.recibidoPor = recibidoPor.trim();
+    envio.fechaEntrega = ahora();
+    // Aquí NO se vuelve a descontar inventario.
+    log(base, "Confirmó entrega del envío " + envioId);
+  });
+
+  K.show();
+};
+
+/* =============== REGISTROS =============== */
+
+function pantallaRegistros(){
+  return tarjeta("Movimientos",
+    tabla(["Fecha", "Tipo", "Código", "Cantidad", "Ruta", "Usuario"],
+      d.movimientos.map(m => `<tr>
+        <td>${h(m.fecha)}</td><td>${h(m.tipo)}</td>
+        <td>${h(m.codigo)}</td>
+        <td>${h(m.cantidad)} ${h(m.unidad)}</td>
+        <td>${h(m.ruta)}</td>
+        <td>${h(m.usuario || m.rol)}</td>
+      </tr>`)
+    )
+  ) + tarjeta("Bitácora",
+    d.bitacora.map(x => `<p>${h(x)}</p>`).join("") || "Sin eventos"
+  );
+}
+
+/* =============== ADMINISTRACIÓN =============== */
+
+function pantallaAdmin(){
+  if(!esAdmin(sesion)) return "";
+
+  return tarjeta("Crear usuario",
+    input("kAltaUsuario", "Nombre de usuario") +
+    input("kAltaClave", "Contraseña", "password") +
+    `<select id="kAltaRol">
+      ${Object.values(R).map(rol =>
+        `<option value="${h(rol)}">${h(rol)}</option>`
+      ).join("")}
+    </select>` +
+    boton("crearUsuario", "Crear usuario", [], "verde")
+  ) + tarjeta("Usuarios",
+    tabla(["Usuario", "Rol", "Acción"],
+      d.usuarios.map(u => `<tr>
+        <td>${h(u.usuario)}</td><td>${h(u.rol)}</td>
+        <td>
+          ${boton("editarUsuario", "Corregir cuenta", [u.usuario])}
+          ${u.usuario !== sesion.usuario
+            ? boton("borrarUsuario", "Eliminar", [u.usuario], "rojo")
+            : ""}
+        </td>
+      </tr>`)
+    )
+  ) + tarjeta("Eliminar un registro",
+    `<p>
+      Operación administrativa: no revierte inventarios.
+      Los registros operativos pendientes deben resolverse
+      antes de eliminarlos.
+    </p>
+    <select id="kBorrarArea">
+      <option value="kanban">Kanban: escribe su código</option>
+      <option value="productos">Producto: escribe su código</option>
+      <option value="solicitudes">Solicitud: escribe su ID</option>
+      <option value="calidad">Inspección: escribe el ID de unidad</option>
+      <option value="envios">Envío: escribe su folio</option>
+      <option value="informes">Informe: escribe su ID</option>
+    </select>` +
+    input("kBorrarCodigo", "Código, ID o folio exacto") +
+    boton("borrarRegistro", "Eliminar registro", [], "rojo")
+  ) + tarjeta("Reinicio",
+    `<p>Borra todo el nodo almacen excepto usuarios.</p>` +
+    boton("reiniciar", "Eliminar sistema, conservar usuarios", [], "rojo")
+  );
+}
+
+K.crearUsuario = async function(){
+  const usuario = campo("kAltaUsuario");
+  const contrasena = campo("kAltaClave");
+  const rol = campo("kAltaRol");
+
+  if(!usuario || !contrasena || !Object.values(R).includes(rol)){
+    throw new Error("Completa usuario, contraseña y rol.");
+  }
+
+  await cambiar("administrar", base => {
+    if(base.usuarios.some(u =>
+      String(u.usuario).toLowerCase() === usuario.toLowerCase()
+    )){
+      throw new Error("Ese usuario ya existe.");
+    }
+
+    base.usuarios.push({usuario, contrasena, rol});
+    log(base, "Creó usuario " + usuario);
+  });
+
+  K.show();
+};
+
+K.editarUsuario = async function(usuario){
+  const actual = d.usuarios.find(u => u.usuario === usuario);
+  if(!actual) throw new Error("Usuario no encontrado.");
+
+  const rol = prompt(
+    "Escribe un rol de esta lista:\n" +
+    Object.values(R).join("\n"),
+    actual.rol
+  );
+
+  if(rol === null) return;
+  if(!Object.values(R).includes(rol)){
+    throw new Error("El rol no coincide con una opción válida.");
+  }
+
+  const clave = prompt(
+    "Nueva contraseña; deja vacío para conservar la actual:"
+  );
+
+  if(clave === null) return;
+
+  await cambiar("administrar", base => {
+    const u = base.usuarios.find(x => x.usuario === usuario);
+    if(!u) throw new Error("La cuenta ya no existe.");
+
+    if(usuario === sesion.usuario && rol !== R.sistemas){
+      throw new Error("No puedes quitarte tu acceso de encargado.");
+    }
+
+    u.rol = rol;
+    if(clave.trim()) u.contrasena = clave.trim();
+
+    log(base, "Corrigió cuenta de " + usuario);
+  });
+
+  K.show();
+};
+
+K.borrarUsuario = async function(usuario){
+  if(!confirm("¿Eliminar usuario " + usuario + "?")) return;
+
+  await cambiar("administrar", base => {
+    if(usuario === sesion.usuario){
+      throw new Error("No puedes eliminar tu propia cuenta.");
+    }
+
+    base.usuarios = base.usuarios.filter(u => u.usuario !== usuario);
+    log(base, "Eliminó usuario " + usuario);
+  });
+
+  K.show();
+};
+
+K.borrarRegistro = async function(){
+  const area = campo("kBorrarArea");
+  const codigo = campo("kBorrarCodigo");
+
+  const permitidas = [
+    "kanban", "productos", "solicitudes",
+    "calidad", "envios", "informes"
+  ];
+
+  if(!permitidas.includes(area) || !codigo){
+    throw new Error("Selecciona un área y escribe el identificador.");
+  }
+
+  if(!confirm("¿Eliminar " + codigo + " de " + area + "?")) return;
+
+  await cambiar("administrar", base => {
+    const clave = ["kanban", "productos"].includes(area) ? "codigo" : "id";
+    const registro = base[area].find(x => x[clave] === codigo);
+
+    if(!registro) throw new Error("Registro no encontrado.");
+
+    if(area === "productos"){
+      if(
+        Number(registro.pt || 0) !== 0 ||
+        base.calidad.some(c =>
+          c.codigoProducto === codigo && c.estado === "pendiente"
+        )
+      ){
+        throw new Error("El producto tiene stock o inspecciones pendientes.");
+      }
+    }
+
+    if(
+      area === "kanban" &&
+      base.solicitudes.some(s =>
+        s.kanban === codigo && s.estado === "pendiente"
+      )
+    ){
+      throw new Error("Esta tarjeta tiene una solicitud pendiente.");
+    }
+
+    if(
+      (area === "solicitudes" || area === "calidad") &&
+      registro.estado === "pendiente"
+    ){
+      throw new Error("Primero resuelve el registro pendiente.");
+    }
+
+    if(area === "envios" && registro.estado === "enviado"){
+      throw new Error("Primero confirma la entrega del envío.");
+    }
+
+    base[area] = base[area].filter(x => x[clave] !== codigo);
+    log(base, "Eliminó " + area + ": " + codigo);
+  });
+
+  K.show();
+};
+
+K.reiniciar = async function(){
+  if(!esAdmin(sesion)) throw new Error("Solo el encargado.");
+
+  if(!confirm(
+    "Se borrarán materiales, productos, Kanban, " +
+    "solicitudes, Calidad, informes, envíos y registros.\n\n" +
+    "Se conservarán los usuarios.\n" +
+    "Cierra los otros teléfonos y exporta una copia antes."
+  )) return;
+
+  if(prompt("Escribe BORRAR SISTEMA") !== "BORRAR SISTEMA") return;
+
+  await cambiar("administrar", base => ({
+    usuarios: base.usuarios
+  }));
+
+  borrador = {
+    codigo: "", nombre: "", descripcion: "",
+    componentes: [], editando: false
+  };
+// Elimina la copia del prototipo anterior de este navegador.
+  localStorage.removeItem("almacenKanbanMultiusuario");
+
+  vista = "mp";
+  K.show();
+
+  alert("Sistema reiniciado. Usuarios conservados.");
+};
+
+/* =============== EJECUCIÓN Y SINCRONIZACIÓN =============== */
+
+K.run = async function(accion, ...argumentos){
+  try{
+    if(typeof K[accion] !== "function"){
+      throw new Error("Acción desconocida.");
+    }
+
+    await K[accion](...argumentos);
+
+  }catch(error){
+    console.error(error);
+    alert(
+      (error.code ? error.code + "\n" : "") +
+      error.message
+    );
+  }
+};
+
+/* Detiene los listeners anteriores en esta ruta.
+   Ningún teléfono debe conservar abierta la versión vieja. */
+
+ref.off("value");
+
+/* Anula puntos de entrada antiguos.
+   La interfaz nueva solo usa K2.run(). */
+
+[
+  "guardar", "crearCuenta", "iniciarSesion", "cambiarRol",
+  "crearMaterialNuevo", "procesarMP", "procesarKanban",
+  "procesarPT", "registrarKanban", "guardarProducto",
+  "eliminarMaterial", "eliminarProducto", "eliminarKanban",
+  "eliminarMovimientoMP", "eliminarBitacoraMP",
+  "eliminarMovimientoProduccion", "eliminarBitacoraProduccion",
+  "eliminarMovimientoPT", "eliminarBitacoraPT",
+  "eliminarMovimiento", "eliminarBitacora", "eliminarTodo",
+  "crearUsuarioDesdeSistemas", "corregirRegistroSistemas",
+  "borrarRegistroSistemas"
+].forEach(nombre => {
+  window[nombre] = function(){
+    alert("Usa los botones de la nueva interfaz KANBAN V2.");
+  };
+});
+
+/* Sustituye el dibujado anterior, incluso si al final del
+   archivo todavía queda una llamada a pantallaLogin(). */
+
+window.mostrar = K.show;
+window.pantallaLogin = K.show;
+window.cerrarSesion = K.salir;
+
+try{
+  sesion = JSON.parse(
+    sessionStorage.getItem("kanbanV2Sesion") || "null"
+  );
+}catch(error){
+  sesion = null;
+}
+
+d = normalizar({});
+
+ref.on("value", snapshot => {
+  d = normalizar(snapshot.val());
+  listo = true;
+  actualizarSesion();
+
+  // No destruye un formulario mientras se está escribiendo.
+  const activo = document.activeElement;
+  const editando = activo &&
+    ["INPUT", "SELECT", "TEXTAREA"].includes(activo.tagName);
+
+  if(editando || ocupado || streamCamara){
+    pendiente = true;
+
+    const aviso = document.getElementById("kAviso");
+
+    if(aviso){
+      aviso.innerHTML =
+        "Hay información actualizada. " +
+        boton("actualizar", "Actualizar pantalla");
+    }
+
+    return;
+  }
+
+  K.show();
+
+}, error => {
+  console.error(error);
+  alert(
+    "No se puede leer Firebase:\n" +
+    error.code + "\n" + error.message
+  );
+});
+
+K.actualizar = function(){
+  if(vista === "diseno") capturarDiseno();
+  pendiente = false;
+  K.show();
+};
+
+K.show();
+
+})();
+
+</script>
+  <style>
+#aviso-pop {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(420px, 90vw);
+  padding: 16px;
+  border-radius: 14px;
+  background: #172033;
+  color: white;
+  z-index: 999999;
+  box-shadow: 0 8px 30px #0006;
+  cursor: pointer;
+}
+
+#aviso-pop strong {
+  display: block;
+  margin-bottom: 6px;
+}
+    
+#aviso-pop button {
+  margin-top: 10px;
+  border: 0;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: #4d8bff;
+  color: white;
+  font-weight: bold;
+}
+</style>
+
+<div id="aviso-pop" hidden>
+  <strong id="aviso-titulo"></strong>
+  <span id="aviso-mensaje"></span>
+  <div>
+    <button type="button" id="aviso-abrir">
+      Abrir
+    </button>
+    <button type="button" id="aviso-cerrar">
+      Cerrar
+    </button>
+  </div>
+</div>
+
+<script>
+window.SistemaAvisos = {
+  iniciar: function(){},
+
+  avisar: function(datos){
+    let titulo = datos && datos.titulo ? datos.titulo : "Aviso";
+    let mensaje = datos && datos.mensaje ? datos.mensaje : "";
+
+    alert(titulo + "\n\n" + mensaje);
+
+    return Promise.resolve({mostrado: "pop-up"});
+  },
+
+  pedirPermiso: function(){
+    return Promise.resolve("granted");
+  }
+};
+</script>
+  
+</body>
+</html>
